@@ -1,5 +1,6 @@
 <script context='module'>
 import { addToast } from '@/lib/Toasts.svelte'
+import { ScreenshotLocations, ScreenshotLocationDefault, ScreenshotLocation } from '@/lib/Screenshot.js'
 export let alToken = localStorage.getItem('ALtoken') || null
 const defaults = {
   playerAutoplay: true,
@@ -102,12 +103,12 @@ function restoreSettings () {
   localStorage.removeItem('settings')
   settings = { ...defaults }
 }
-function handleFolder () {
+function handleFolder(setting) {
+  window.IPC.on('path', data => {
+    settings[setting] = data
+  })
   window.IPC.emit('dialog')
 }
-window.IPC.on('path', data => {
-  settings.torrentPath = data
-})
 </script>
 
 <Tabs>
@@ -183,6 +184,28 @@ window.IPC.on('path', data => {
             <input type='checkbox' id='player-autocomplete' bind:checked={settings.playerAutocomplete} />
             <label for='player-autocomplete'>Autocomplete Episodes</label>
           </div>
+          <div class="input-group mb-10 form-control-lg" data-toggle="tooltip" data-placement="top" data-title="Where to save screenshots">
+            <div class="input-group-prepend">
+              <span class="input-group-text justify-content-center">Screenshot location</span>
+            </div>
+            <select class="form-control form-control-lg" bind:value={settings.screenshotLocation}>
+              {#each ScreenshotLocations as location}
+                  <option selected={location == (settings.screenshotLocation || ScreenshotLocationDefault) || false} value="{location}">{location}</option>
+              {/each}
+            </select>
+          </div>
+            {#if settings.screenshotLocation === ScreenshotLocation.Filesystem}
+              <div
+                class="input-group input-group-lg form-control-lg mb-10 w-500"
+                data-toggle="tooltip"
+                data-placement="bottom"
+                data-title="Path To Folder Which To Use To Store Screenshots">
+                <div class="input-group-prepend">
+                  <button type="button" on:click={() => handleFolder('screenshotFilesystemPath')} class="btn btn-primary input-group-append">Select Folder</button>
+                </div>
+                <input type="text" class="form-control" bind:value={settings.screenshotFilesystemPath} placeholder="Screenshot folder path" />
+              </div>
+            {/if}
         </div>
       </Tab>
       <Tab>
@@ -257,7 +280,7 @@ window.IPC.on('path', data => {
             data-placement='bottom'
             data-title='Path To Folder Which To Use To Store Torrent Files'>
             <div class='input-group-prepend'>
-              <button type='button' on:click={handleFolder} class='btn btn-primary input-group-append'>Select Folder</button>
+              <button type='button' on:click={() => handleFolder('torrentPath')} class='btn btn-primary input-group-append'>Select Folder</button>
             </div>
             <input type='text' class='form-control' bind:value={settings.torrentPath} placeholder='Folder Path' />
           </div>

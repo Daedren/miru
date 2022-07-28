@@ -1,0 +1,33 @@
+name: Build
+
+on: 
+  workflow_dispatch
+
+jobs:
+  release:
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+
+    steps:
+      - name: Check out Git repository
+        uses: actions/checkout@v3
+
+      - name: Install Node.js, NPM and Yarn
+        uses: actions/setup-node@v3
+        with:
+          node-version: 16
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build
+        run: npm run build
+        
+      - name: Publish to artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: Archive
+          path: dist

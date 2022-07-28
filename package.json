@@ -9,6 +9,7 @@
     "web:watch": "vite",
     "electron:start": "electron src",
     "build": "vite build && electron-builder",
+    "buildNoPublish": "vite build && electron-builder -p never",
     "publish": "vite build && electron-builder -p always"
   },
   "devDependencies": {
@@ -72,7 +73,7 @@
     },
     "win": {
       "artifactName": "${os}-${name}-${version}.${ext}",
-      "target": "nsis"
+      "target": "portable"
     },
     "linux": {
       "artifactName": "${os}-${arch}-${name}-${version}.${ext}",

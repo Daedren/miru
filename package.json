@@ -1,7 +1,8 @@
 {
   "name": "Miru",
-  "version": "2.10.2",
+  "version": "3.1.9",
   "author": "ThaUnknown_ <ThaUnknown@users.noreply.github.com>",
+  "description": "Stream anime torrents, real-time with no waiting for downloads.",
   "main": "src/index.js",
   "homepage": "https://github.com/ThaUnknown/miru#readme",
   "scripts": {
@@ -13,14 +14,13 @@
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^1.0.1",
-    "builtin-modules": "^3.2.0",
     "concurrently": "^7.0.0",
-    "electron": "^18.2.1",
-    "electron-builder": "^22.14.13",
+    "electron": "20.1.1",
+    "electron-builder": "^23.3.3",
     "electron-notarize": "^1.1.1",
     "svelte": "^3.47.0",
     "vite": "^3.0.0",
-    "vite-plugin-commonjs-externals": "^0.1.1"
+    "vite-plugin-commonjs": "^0.5.2"
   },
   "standard": {
     "ignore": [
@@ -35,7 +35,7 @@
   "build": {
     "electronDownload": {
       "mirror": "https://github.com/aa910d571134/feb7c2e1a10f/releases/download/",
-      "version": "18.2.1",
+      "version": "20.0.0",
       "customDir": "2ffc48f0b43f"
     },
     "protocols": {
@@ -75,8 +75,8 @@
       "target": "nsis"
     },
     "linux": {
-      "artifactName": "${os}-${arch}-${name}-${version}.${ext}",
-      "category": "Video;Anime",
+      "artifactName": "${os}-${name}-${version}.${ext}",
+      "category": "AudioVideo;Video",
       "description": "Bittorrent streaming software for cats",
       "desktop": {
         "Name": "Miru",
@@ -93,18 +93,7 @@
         {
           "arch": "x64",
           "target": "deb"
-        },
-        {
-          "arch": "arm64",
-          "target": "AppImage"
-        },
-        {
-          "arch": "arm64",
-          "target": "deb"
         }
-      ],
-      "mimeTypes": [
-        "x-scheme-handler/miru"
       ]
     },
     "nsis": {
@@ -114,18 +103,21 @@
   },
   "dependencies": {
     "anitomyscript": "^2.0.4",
+    "bottleneck": "^2.19.5",
     "browser-event-target-emitter": "^1.0.0",
-    "discord-rpc": "^4.0.1",
+    "discord-rpc": "4.0.1",
     "electron-log": "^4.4.6",
     "electron-updater": "^4.6.5",
-    "jassub": "^1.1.8",
+    "jassub": "1.1.11",
+    "js-levenshtein": "^1.1.6",
     "matroska-subtitles": "github:ThaUnknown/matroska-subtitles#patch",
     "mime": "^3.0.0",
+    "p2pcf": "github:ThaUnknown/p2pcf#no-remove",
     "pump": "^3.0.0",
     "quartermoon": "^1.2.1",
     "range-parser": "^1.2.1",
     "svelte-keybinds": "^1.0.4",
     "svelte-miniplayer": "^1.0.2",
-    "webtorrent": "^1.8.14"
+    "webtorrent": "^1.8.26"
   }
 }

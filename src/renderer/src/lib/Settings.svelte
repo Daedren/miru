@@ -1,5 +1,5 @@
 <script context='module'>
-import { addToast } from '@/lib/Toasts.svelte'
+import { addToast } from './Toasts.svelte'
 import { ScreenshotLocations, ScreenshotLocationDefault, ScreenshotLocation } from '@/lib/Screenshot.js'
 export let alToken = localStorage.getItem('ALtoken') || null
 const defaults = {
@@ -9,8 +9,6 @@ const defaults = {
   rssQuality: '1080',
   rssFeeds: [['New Releases', 'SubsPlease']],
   rssAutoplay: true,
-  rssTrusted: true,
-  rssBatch: false,
   torrentSpeed: 10,
   torrentPersist: false,
   torrentDHT: false,
@@ -70,7 +68,7 @@ setInterval(checkUpdate, 1200000)
 </script>
 
 <script>
-import { Tabs, TabLabel, Tab } from '../Tabination.js'
+import { Tabs, TabLabel, Tab } from './Tabination.js'
 import { onDestroy } from 'svelte'
 
 onDestroy(() => {
@@ -253,22 +251,6 @@ function handleFolder(setting) {
               Played'>
             <input type='checkbox' id='rss-autoplay' bind:checked={settings.rssAutoplay} />
             <label for='rss-autoplay'>Auto-Play Torrents</label>
-          </div>
-          <div
-            class='custom-switch mb-10 pl-10 font-size-16 w-300'
-            data-toggle='tooltip'
-            data-placement='bottom'
-            data-title='Finds Only Trusted Torrents, Gives Less Results But Higher Quality And With More Seeders'>
-            <input type='checkbox' id='rss-trusted' bind:checked={settings.rssTrusted} />
-            <label for='rss-trusted'>Trusted Only</label>
-          </div>
-          <div
-            class='custom-switch mb-10 pl-10 font-size-16 w-300'
-            data-toggle='tooltip'
-            data-placement='bottom'
-            data-title='Tries To Find Batches For Finished Shows Instead Of Downloading 1 Episode At A Time'>
-            <input type='checkbox' id='rss-batch' bind:checked={settings.rssBatch} />
-            <label for='rss-batch'>Batch Lookup</label>
           </div>
         </div>
       </Tab>

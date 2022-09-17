@@ -1,5 +1,8 @@
-import { alToken } from '@/lib/pages/Settings.svelte'
+import { alToken } from '@/lib/Settings.svelte'
 import { addToast } from '@/lib/Toasts.svelte'
+import lavenshtein from 'js-levenshtein'
+
+import Bottleneck from 'bottleneck'
 
 const codes = {
   100: 'Continue',
@@ -61,6 +64,14 @@ const codes = {
 }
 
 export const alID = !!alToken && alRequest({ method: 'Viewer', token: alToken })
+if (alID) {
+  alID.then(result => {
+    const lists = result?.data?.Viewer?.mediaListOptions?.animeList?.customLists || []
+    if (!lists.includes('Watched using Miru')) {
+      alRequest({ method: 'CustomList', lists })
+    }
+  })
+}
 
 function printError (error) {
   console.warn(error)
@@ -72,17 +83,25 @@ function printError (error) {
   })
 }
 
+const limiter = new Bottleneck({ maxConcurrent: 100, minTime: 600 })
+const limit = limiter.wrap(handleRequest)
+
 async function handleRequest (opts) {
   const res = await fetch('https://graphql.anilist.co', opts)
+  if (!res.ok && res.status === 429) return await limit(opts)
   let json = null
   try {
     json = await res.json()
   } catch (error) {
     if (res.ok) printError(error)
   }
-  if (!res.ok && json) {
-    for (const error of json?.errors || []) {
-      printError(error)
+  if (!res.ok) {
+    if (json) {
+      for (const error of json?.errors || []) {
+        printError(error)
+      }
+    } else {
+      printError(res)
     }
   }
   return json
@@ -96,28 +115,53 @@ export function alEntry (filemedia) {
     if (media.status === 'FINISHED' || media.status === 'RELEASING') {
       // some anime/OVA's can have a single episode, or some movies can have multiple episodes
       const singleEpisode = (!media.episodes || (media.format === 'MOVIE' && media.episodes === 1)) && 1
-      const videoEpisode = filemedia.episodeNumber || singleEpisode
+      const videoEpisode = Number(filemedia.episode) || singleEpisode
       const mediaEpisode = media.nextAiringEpisode?.episode || media.episodes || singleEpisode
       // check episode range
-      if (videoEpisode && mediaEpisode && mediaEpisode >= videoEpisode) {
+      if (videoEpisode && mediaEpisode && (mediaEpisode >= videoEpisode)) {
         // check user's own watch progress
-        if (!media.mediaListEntry || media.mediaListEntry?.progress <= videoEpisode || singleEpisode) {
+        const lists = media.mediaListEntry?.customLists.filter(list => list.enabled).map(list => list.name) || []
+
+        const status = media.mediaListEntry?.status === 'REPEATING' ? 'REPEATING' : 'CURRENT'
+
+        if (!media.mediaListEntry || (media.mediaListEntry?.progress <= videoEpisode) || singleEpisode) {
           const variables = {
             method: 'Entry',
-            repeat: 0,
+            repeat: media.mediaListEntry?.repeat || 0,
             id: media.id,
-            status: 'CURRENT',
-            episode: videoEpisode
+            status,
+            episode: videoEpisode,
+            lists
           }
           if (videoEpisode === mediaEpisode) {
             variables.status = 'COMPLETED'
-            if (media.mediaListEntry?.status === 'COMPLETED' || media.mediaListEntry.status === 'REPEATING') variables.repeat = media.mediaListEntry.repeat + 1
+            if (media.mediaListEntry?.status === 'REPEATING') variables.repeat = media.mediaListEntry.repeat + 1
+          }
+          if (!lists.includes('Watched using Miru')) {
+            variables.lists.push('Watched using Miru')
           }
           alRequest(variables)
         }
       }
     }
   }
+}
+
+function getDistanceFromTitle (media, name) {
+  if (media) {
+    const distances = [...Object.values(media.title), ...media.synonyms].filter(v => v).map(title => lavenshtein(title.toLowerCase(), name.toLowerCase()))
+    const min = distances.reduce((prev, curr) => prev < curr ? prev : curr)
+    media.lavenshtein = min
+    return media
+  }
+}
+
+export async function alSearch (method) {
+  const res = await alRequest(method)
+  const media = res.data.Page.media.map(media => getDistanceFromTitle(media, method.name))
+  if (!media.length) return res
+  const lowest = media.reduce((prev, curr) => prev.lavenshtein < curr.lavenshtein ? prev : curr)
+  return { data: { Page: { media: [lowest] } } }
 }
 
 export async function alRequest (opts) {
@@ -146,7 +190,7 @@ title {
   native,
   userPreferred
 },
-description(asHtml: true),
+description(asHtml: false),
 season,
 seasonYear,
 format,
@@ -181,6 +225,7 @@ mediaListEntry {
   progress,
   repeat,
   status,
+  customLists(asArray: true),
   score(format: POINT_10)
 },
 source,
@@ -286,7 +331,12 @@ query {
       medium
     },
     name,
-    id
+    id,
+    mediaListOptions {
+      animeList {
+        customLists
+      }
+    }
   }
 }`
       break
@@ -363,9 +413,10 @@ query ($page: Int, $perPage: Int, $sort: [MediaSort], $type: MediaType, $search:
       variables.status = opts.status
       variables.episode = opts.episode
       variables.score = opts.score
+      variables.lists = opts.lists
       query = /* js */`
-      mutation ($id: Int, $status: MediaListStatus, $episode: Int, $repeat: Int, $score: Int) {
-        SaveMediaListEntry (mediaId: $id, status: $status, progress: $episode, repeat: $repeat, scoreRaw: $score) {
+      mutation ($lists: [String], $id: Int, $status: MediaListStatus, $episode: Int, $repeat: Int, $score: Int) {
+        SaveMediaListEntry (mediaId: $id, status: $status, progress: $episode, repeat: $repeat, scoreRaw: $score, customLists: $lists) {
           id,
           status,
           progress,
@@ -410,6 +461,15 @@ query ($page: Int, $perPage: Int, $sort: [MediaSort], $type: MediaType, $search:
               }
             }
           }
+        }
+      }`
+      break
+    } case 'CustomList':{
+      variables.lists = [...opts.lists, 'Watched using Miru']
+      query = /* js */`
+      mutation($lists: [String]) {
+        UpdateUser(animeListOptions: { customLists: $lists }){
+          id
         }
       }`
       break

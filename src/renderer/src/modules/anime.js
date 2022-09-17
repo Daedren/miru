@@ -1,6 +1,6 @@
 import { add } from './torrent.js'
 import { DOMPARSER, PromiseBatch } from './util.js'
-import { alRequest } from './anilist.js'
+import { alRequest, alSearch } from './anilist.js'
 import anitomyscript from 'anitomyscript'
 import 'anitomyscript/build/anitomyscript.wasm?url'
 import { addToast } from '@/lib/Toasts.svelte'
@@ -9,21 +9,11 @@ import { view } from '@/App.svelte'
 const torrentRx = /(^magnet:){1}|(^[A-F\d]{8,40}$){1}|(.*\.torrent$){1}/i
 const imageRx = /\.(jpeg|jpg|gif|png|webp)/i
 
-fetch('https://nyaa.si').catch(() => {
-  addToast({
-    text: 'Failed connecting to Nyaa! Visit<br><a href="https://thewiki.moe/en/tutorials/unblock">thewiki.moe/en/tutorials/unblock</a><br>for a guide on how to bypass ISP blocks.',
-    title: 'Nyaa Blocked',
-    type: 'danger'
-  })
-})
-
 window.addEventListener('paste', async e => { // WAIT image lookup on paste, or add torrent on paste
   const item = e.clipboardData.items[0]
   if (item?.type.indexOf('image') === 0) {
     e.preventDefault()
-    const formData = new FormData()
-    formData.append('image', item.getAsFile())
-    traceAnime(formData, 'file')
+    traceAnime(item.getAsFile(), 'file')
   } else if (item?.type === 'text/plain') {
     item.getAsString(text => {
       if (torrentRx.exec(text)) {
@@ -44,16 +34,16 @@ window.addEventListener('paste', async e => { // WAIT image lookup on paste, or 
     })
   }
 })
-function traceAnime (image, type) { // WAIT lookup logic
+export function traceAnime (image, type) { // WAIT lookup logic
   if (type === 'file') {
     const reader = new FileReader()
     reader.onload = e => {
       addToast({
         title: 'Looking up anime for image',
-        text: /* html */`<img class="w-200 rounded pt-5" src="${e.target.result}">`
+        text: /* html */`You can also paste an URL to an image!<br><img class="w-200 rounded pt-5" src="${e.target.result}">`
       })
     }
-    reader.readAsDataURL(image.get('image'))
+    reader.readAsDataURL(image)
   } else {
     addToast({
       title: 'Looking up anime for image',
@@ -63,9 +53,11 @@ function traceAnime (image, type) { // WAIT lookup logic
   let options
   let url = `https://api.trace.moe/search?cutBorders&url=${image}`
   if (type === 'file') {
+    const formData = new FormData()
+    formData.append('image', image)
     options = {
       method: 'POST',
-      body: image
+      body: formData
     }
     url = 'https://api.trace.moe/search'
   }
@@ -91,8 +83,6 @@ export function getMediaMaxEp (media, playable) {
   }
 }
 
-export const episodeRx = /Episode (\d+) - (.*)/
-
 // resolve anime name based on file name and store it
 const postfix = {
   1: 'st',
@@ -101,7 +91,7 @@ const postfix = {
 }
 
 async function resolveTitle (name) {
-  const method = { name, method: 'SearchName', perPage: 1, status: ['RELEASING', 'FINISHED'], sort: 'SEARCH_MATCH' }
+  const method = { name, method: 'SearchName', perPage: 10, status: ['RELEASING', 'FINISHED'], sort: 'SEARCH_MATCH' }
 
   // inefficient but readable
 
@@ -113,17 +103,17 @@ async function resolveTitle (name) {
     if (match) {
       if (Number(match[1]) === 1) { // if this is S1, remove the " S1" or " S01"
         method.name = method.name.replace(/ S(\d+)/, '')
-        media = (await alRequest(method)).data.Page.media[0]
+        media = (await alSearch(method)).data.Page.media[0]
       } else {
         method.name = method.name.replace(/ S(\d+)/, ` ${Number(match[1])}${postfix[Number(match[1])] || 'th'} Season`)
-        media = (await alRequest(method)).data.Page.media[0]
+        media = (await alSearch(method)).data.Page.media[0]
         if (!media) {
           method.name = oldname.replace(/ S(\d+)/, ` Season ${Number(match[1])}`)
-          media = (await alRequest(method)).data.Page.media[0]
+          media = (await alSearch(method)).data.Page.media[0]
         }
       }
     } else {
-      media = (await alRequest(method)).data.Page.media[0]
+      media = (await alSearch(method)).data.Page.media[0]
     }
 
     // remove (TV)
@@ -131,7 +121,7 @@ async function resolveTitle (name) {
       const match = method.name.match(/\(TV\)/)
       if (match) {
         method.name = method.name.replace('(TV)', '')
-        media = (await alRequest(method)).data.Page.media[0]
+        media = (await alSearch(method)).data.Page.media[0]
       }
     }
     // remove - :
@@ -139,7 +129,7 @@ async function resolveTitle (name) {
       const match = method.name.match(/[-:]/g)
       if (match) {
         method.name = method.name.replace(/[-:]/g, '')
-        media = (await alRequest(method)).data.Page.media[0]
+        media = (await alSearch(method)).data.Page.media[0]
       }
     }
     // remove 2020
@@ -147,7 +137,7 @@ async function resolveTitle (name) {
       const match = method.name.match(/ (19[5-9]\d|20\d{2})/)
       if (match) {
         method.name = method.name.replace(/ (19[5-9]\d|20\d{2})/, '')
-        media = (await alRequest(method)).data.Page.media[0]
+        media = (await alSearch(method)).data.Page.media[0]
       }
     }
   } catch (e) { }
@@ -157,6 +147,7 @@ async function resolveTitle (name) {
 
 function getParseObjTitle (obj) {
   let title = obj.anime_title
+
   const match = title.match(/ S(\d{1,2})E(\d{1,2})v\d/)
   if (match) {
     obj.episode_number = match[2]
@@ -164,16 +155,15 @@ function getParseObjTitle (obj) {
     obj.anime_title = title.replace(/ S(\d{1,2})E(\d{1,2})v\d/, '')
     title = obj.anime_title
   }
+  if (obj.anime_year) title += ` ${obj.anime_year}`
   if (obj.anime_season > 1) title += ' S' + obj.anime_season
   return title
 }
 
-export async function resolveFileMedia (opts) {
-  // opts.fileName
-  const parsePromises = opts.fileName.constructor === Array
-    ? opts.fileName.map(name => anitomyscript(name))
-    : [anitomyscript(opts.fileName)]
-  const parseObjs = await Promise.all(parsePromises)
+export async function resolveFileMedia (fileName) {
+  let parseObjs = await anitomyscript(fileName)
+
+  if (parseObjs.constructor !== Array) parseObjs = [parseObjs]
   // batches promises in 10 at a time, because of CF burst protection, which still sometimes gets triggered :/
   await PromiseBatch(resolveTitle, [...new Set(parseObjs.map(obj => getParseObjTitle(obj)))].filter(title => !(title in relations)), 10)
   const fileMedias = []
@@ -226,31 +216,25 @@ export async function resolveFileMedia (opts) {
         }
       }
     }
-    const streamingEpisode = media?.streamingEpisodes.filter(episode => episodeRx.exec(episode.title) && Number(episodeRx.exec(episode.title)[1]) === Number(parseObj.episode_number))[0]
     fileMedias.push({
-      mediaTitle: media?.title.userPreferred || parseObj.anime_title,
-      episodeNumber: episode || parseObj.episode_number,
-      episodeTitle: streamingEpisode && episodeRx.exec(streamingEpisode.title)[2],
-      episodeThumbnail: streamingEpisode?.thumbnail,
-      mediaCover: media?.coverImage.medium,
-      name: 'Miru',
+      episode: episode || parseObj.episode_number,
       parseObject: parseObj,
       media,
       failed
     })
   }
-  return fileMedias.length === 1 ? fileMedias[0] : fileMedias
+  return fileMedias
 }
 
 export function findEdge (media, type, formats = ['TV', 'TV_SHORT'], skip) {
-  const res = media.relations.edges.find(edge => {
+  let res = media.relations.edges.find(edge => {
     if (edge.relationType === type) {
       return formats.includes(edge.node.format)
     }
     return false
   })
   // this is hit-miss
-  // if (!res && !skip) res = findEdge(media, type, formats = ['TV', 'TV_SHORT', 'MOVIE'], true)
+  if (!res && !skip && type === 'SEQUEL') res = findEdge(media, type, formats = ['TV', 'TV_SHORT', 'OVA'], true)
   return res
 }
 

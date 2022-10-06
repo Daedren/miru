@@ -1,102 +1,104 @@
 <script>
-import { alToken } from '@/lib/pages/Settings.svelte'
-import { addToast } from '../Toasts.svelte'
-import { alRequest } from '@/modules/anilist.js'
-import { getContext } from 'svelte'
-import { getMediaMaxEp } from '@/modules/anime.js'
-import { playAnime } from '../RSSView.svelte'
-export let media = null
+  import { alToken } from '../Settings.svelte'
+  import { addToast } from '../Toasts.svelte'
+  import { alRequest } from '@/modules/anilist.js'
+  import { getContext } from 'svelte'
+  import { getMediaMaxEp } from '@/modules/anime.js'
+  import { playAnime } from '../RSSView.svelte'
+  export let media = null
 
-const toggleStatusMap = {
-  CURRENT: true,
-  COMPLETED: true,
-  PAUSED: true,
-  REPEATING: true
-}
-async function toggleStatus () {
-  if (media.mediaListEntry?.status !== 'PLANNING') {
-    // add
-    await setStatus((media.mediaListEntry?.status in toggleStatusMap) ? 'DROPPED' : 'CURRENT')
-  } else {
-    // delete
+  const toggleStatusMap = {
+    CURRENT: 'DROPPED',
+    COMPLETED: 'REPEATING',
+    PAUSED: 'CURRENT',
+    REPEATING: 'CURRENT',
+    DROPPED: 'PLANNING',
+    PLANNING: 'remove'
+  }
+  async function toggleStatus () {
+    if (media.mediaListEntry?.status !== 'PLANNING') {
+      // add
+      await setStatus(toggleStatusMap[media.mediaListEntry?.status] || 'PLANNING')
+    } else {
+      // delete
+      const variables = {
+        method: 'Delete',
+        id: media.mediaListEntry.id
+      }
+      await alRequest(variables)
+    }
+    update()
+  }
+  function getStatusText () {
+    if (media.mediaListEntry) {
+      const { status } = media.mediaListEntry
+      if (status === 'PLANNING') return 'Remove From List'
+      if (media.mediaListEntry?.status in toggleStatusMap) return 'Drop From Watching'
+    }
+    return 'Add To List'
+  }
+  function setStatus (status, other = {}) {
     const variables = {
-      method: 'Delete',
-      id: media.mediaListEntry.id
+      method: 'Entry',
+      id: media.id,
+      status,
+      ...other
+    }
+    return alRequest(variables)
+  }
+  async function update () {
+    media = (await alRequest({ method: 'SearchIDSingle', id: media.id })).data.Media
+  }
+  async function score (media, score) {
+    const variables = {
+      method: 'Entry',
+      id: media.id,
+      score: score * 10
     }
     await alRequest(variables)
+    media = (await alRequest({ method: 'SearchIDSingle', id: media.id })).data.Media
   }
-  update()
-}
-function getStatusText () {
-  if (media.mediaListEntry) {
-    const { status } = media.mediaListEntry
-    if (status === 'PLANNING') return 'Remove From List'
-    if (media.mediaListEntry?.status in toggleStatusMap) return 'Drop From Watching'
+  const trailer = getContext('trailer')
+  function viewTrailer (media) {
+    $trailer = media.trailer.id
   }
-  return 'Add To List'
-}
-function setStatus (status, other = {}) {
-  const variables = {
-    method: 'Entry',
-    id: media.id,
-    status,
-    ...other
+  function copyToClipboard (text) {
+    navigator.clipboard.writeText(text)
+    addToast({
+      title: 'Copied to clipboard',
+      text: 'Copied share URL to clipboard',
+      type: 'primary',
+      duration: '5000'
+    })
   }
-  return alRequest(variables)
-}
-async function update () {
-  media = (await alRequest({ method: 'SearchIDSingle', id: media.id })).data.Media
-}
-async function score (score) {
-  const variables = {
-    method: 'Entry',
-    id: media.id,
-    score: score * 10
+  function openInBrowser (url) {
+    window.IPC.emit('open', url)
   }
-  await alRequest(variables)
-  media = (await alRequest({ method: 'SearchIDSingle', id: media.id })).data.Media
-}
-const trailer = getContext('trailer')
-function viewTrailer (media) {
-  $trailer = media.trailer.id
-}
-function copyToClipboard (text) {
-  navigator.clipboard.writeText(text)
-  addToast({
-    title: 'Copied to clipboard',
-    text: 'Copied share URL to clipboard',
-    type: 'primary',
-    duration: '5000'
-  })
-}
-function openInBrowser (url) {
-  window.IPC.emit('open', url)
-}
-function getPlayText (media) {
-  if (media.mediaListEntry) {
-    const { status, progress } = media.mediaListEntry
-    if (progress) {
-      if (status === 'COMPLETED') return 'Rewatch'
-      return 'Continue ' + Math.min(getMediaMaxEp(media), progress + 1)
-    }
-  }
-  return 'Play'
-}
-async function play () {
-  let ep = 1
-  if (media.mediaListEntry) {
-    const { status, progress } = media.mediaListEntry
-    if (progress) {
-      if (status === 'COMPLETED') {
-        setStatus('REPEATING', { episode: 0 })
-      } else {
-        ep = Math.min(getMediaMaxEp(media, true), progress + 1)
+  function getPlayText (media) {
+    if (media.mediaListEntry) {
+      const { status, progress } = media.mediaListEntry
+      if (progress) {
+        if (status === 'COMPLETED') return 'Rewatch'
+        return 'Continue ' + Math.min(getMediaMaxEp(media, true), progress + 1)
       }
     }
+    return 'Play'
   }
-  playAnime(media, ep)
-  media = null
-}
+  async function play () {
+    let ep = 1
+    if (media.mediaListEntry) {
+      const { status, progress } = media.mediaListEntry
+      if (progress) {
+        if (status === 'COMPLETED') {
+          await setStatus('REPEATING', { episode: 0 })
+        } else {
+          ep = Math.min(getMediaMaxEp(media, true), progress + 1)
+        }
+      }
+    }
+    playAnime(media, ep, true)
+    media = null
+  }
 </script>
 
 <div class='col-md-4 d-flex justify-content-end flex-column'>
@@ -117,7 +119,7 @@ async function play () {
         <div class='input-group-prepend'>
           <span class='input-group-text bg-tp pl-15 d-flex material-icons font-size-18'>hotel_class</span>
         </div>
-        <select class='form-control' required value={(media.mediaListEntry?.score || '').toString()} on:change={({ target }) => { score(media, target.value) }}>
+        <select class='form-control' required value={(media.mediaListEntry?.score || '').toString()} on:change={({ target }) => { score(media, Number(target.value)) }}>
           <option value selected disabled hidden>Score</option>
           <option>1</option>
           <option>2</option>

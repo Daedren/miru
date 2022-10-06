@@ -1,26 +1,26 @@
 <script>
-import { playAnime } from './RSSView.svelte'
-import { alRequest } from '@/modules/anilist.js'
-import { getMediaMaxEp } from '@/modules/anime.js'
-import { getContext } from 'svelte'
-import Details from './ViewAnime/Details.svelte'
-import Following from './ViewAnime/Following.svelte'
-import Controls from './ViewAnime/Controls.svelte'
-import ToggleList from './ViewAnime/ToggleList.svelte'
+  import { playAnime } from '../RSSView.svelte'
+  import { alRequest } from '@/modules/anilist.js'
+  import { getMediaMaxEp } from '@/modules/anime.js'
+  import { getContext } from 'svelte'
+  import Details from './Details.svelte'
+  import Following from './Following.svelte'
+  import Controls from './Controls.svelte'
+  import ToggleList from './ToggleList.svelte'
 
-const view = getContext('view')
-const trailer = getContext('trailer')
-function close () {
-  $view = null
-}
-$: media = $view
-let modal
-$: media && modal?.focus()
-$: !$trailer && modal?.focus()
-$: maxPlayEp = getMediaMaxEp($view || {}, true)
-function checkClose ({ keyCode }) {
-  if (keyCode === 27) close()
-}
+  const view = getContext('view')
+  const trailer = getContext('trailer')
+  function close () {
+    $view = null
+  }
+  $: media = $view
+  let modal
+  $: media && modal?.focus()
+  $: !$trailer && modal?.focus()
+  $: maxPlayEp = getMediaMaxEp($view || {}, true)
+  function checkClose ({ keyCode }) {
+    if (keyCode === 27) close()
+  }
 </script>
 
 <div class='modal modal-full' class:show={media} on:keydown={checkClose} tabindex='-1' bind:this={modal}>
@@ -48,10 +48,12 @@ function checkClose ({ keyCode }) {
                           Rating: {media.averageScore + '%'}
                         </span>
                       {/if}
-                      <span class='material-icons mx-10 font-size-24'> monitor </span>
-                      <span class='mr-20 text-capitalize'>
-                        Format: {media.format === 'TV' ? media.format : media.format?.replace(/_/g, ' ').toLowerCase()}
-                      </span>
+                      {#if media.format}
+                        <span class='material-icons mx-10 font-size-24'> monitor </span>
+                        <span class='mr-20 text-capitalize'>
+                          Format: {media.format === 'TV' ? media.format : media.format?.replace(/_/g, ' ').toLowerCase()}
+                        </span>
+                      {/if}
                       {#if media.episodes !== 1 && getMediaMaxEp(media)}
                         <span class='material-icons mx-10 font-size-24'> theaters </span>
                         <span class='mr-20'>
@@ -83,8 +85,8 @@ function checkClose ({ keyCode }) {
         <div class='row p-20 px-xl-0 flex-column-reverse flex-md-row'>
           <div class='col-md-9 px-20'>
             <h1 class='title font-weight-bold text-white'>Synopsis</h1>
-            <div class='font-size-16 pr-15'>
-              {@html media.description}
+            <div class='font-size-16 pr-15 pre-wrap'>
+              {media.description?.replace(/<[^>]*>/g, '') || ''}
             </div>
             <ToggleList list={media.relations?.edges?.filter(({ node }) => node.type === 'ANIME')} let:item>
               <div class='w-150 mx-15 mb-10 rel pointer' on:click={async () => { $view = null; $view = (await alRequest({ method: 'SearchIDSingle', id: item.node.id })).data.Media }}>
@@ -134,6 +136,9 @@ function checkClose ({ keyCode }) {
 </div>
 
 <style>
+  .pre-wrap {
+    white-space: pre-wrap
+  }
   .banner {
     background: no-repeat center center;
     background-size: cover;

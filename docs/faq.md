@@ -22,7 +22,6 @@ One of four reasons:
 - your download speed isn't fast enough
 - your ISP blocks Nyaa, see [this tutorial](https://thewiki.moe/en/tutorials/unblock) for a fix
 - the app couldn't find a matching torrent for the anime
-  - you can POTENTIALLY fix this by disabling `Trusted Only` in `RSS Settings`, but this might cause false-positives when finding torrents, so I'd also disable `Auto-play torrents`, and pick torrents manually.
 
 ## **Will you make an android version?**
 No. This app cannot be ported to android in any way.
@@ -42,5 +41,5 @@ Electron has node.js integration, which can use TCP/UDP, that is the only reason
 
 Yes. A BitTorrent implementation which uses WebRTC exists, but it's not yet adopted by any clients, and libtorrent [the library which qBit and others use] is still working/just added support for WebRTC, which means there's no swarm. This will hopefully change in the future.
 
-## **Where codec support?**
-This uses the browser's built in video player, which uses a cut down version of FFMPEG, which lacks a support for a LOT of containers and codecs because of licensing. Since Electron is just Chromium IN THEORY it is possible to re-compile FFMPEG with support for more containers and codecs, but people seem to be going out of their way to make sure you can't find how to do that. PR pls?
+## **Miru crashed too many times.**
+This is likely because Miru updated from a very old version to a very new one. Uninstall Miru, go to `%appdata%/miru` remove all files and re-install it. If this issue persists visit the Discord for help.

@@ -1,4 +1,4 @@
-import { set } from './pages/Settings.svelte'
+import { set } from './Settings.svelte'
 import { addToast } from '@/lib/Toasts.svelte'
 export const ScreenshotLocation = {
   Clipboard: 'clipboard',

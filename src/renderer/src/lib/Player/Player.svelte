@@ -2,7 +2,7 @@
   import { set } from '../Settings.svelte'
   import { playAnime } from '../RSSView.svelte'
   import { client } from '@/modules/torrent.js'
-  import { onMount, createEventDispatcher } from 'svelte'
+  import { onMount, createEventDispatcher, tick } from 'svelte'
   import { alEntry } from '@/modules/anilist.js'
   // import Peer from '@/modules/Peer.js'
   import Subtitles from '@/modules/subtitles.js'
@@ -77,56 +77,6 @@
       })
     }
   }
-  function getFPS () {
-    video.fps = new Promise(resolve => {
-      let lastmeta = null
-      let count = 0
-
-      function handleFrames (now, metadata) {
-        if (count) {
-          // resolve on 2nd frame, 1st frame might be a cut-off
-          if (lastmeta) {
-            const msbf = (metadata.mediaTime - lastmeta.mediaTime) / (metadata.presentedFrames - lastmeta.presentedFrames)
-            const rawFPS = (1 / msbf).toFixed(3)
-            // this is accurate for mp4, mkv is a few ms off
-            if (current.name.endsWith('.mkv')) {
-              if (rawFPS < 25 && rawFPS > 22) {
-                resolve(23.976)
-              } else if (rawFPS < 31 && rawFPS > 28) {
-                resolve(29.97)
-              } else if (rawFPS < 62 && rawFPS > 58) {
-                resolve(59.94)
-              } else {
-                resolve(rawFPS) // smth went VERY wrong
-              }
-            } else {
-              resolve(rawFPS)
-            }
-          } else {
-            lastmeta = metadata
-            video.requestVideoFrameCallback(handleFrames)
-          }
-        } else {
-          count++
-          video.requestVideoFrameCallback(handleFrames)
-        }
-      }
-      video.requestVideoFrameCallback(handleFrames)
-      playFrame()
-    })
-  }
-
-  // plays one frame
-  function playFrame () {
-    let wasPaused = false
-    video.requestVideoFrameCallback(() => {
-      if (wasPaused) paused = true
-    })
-    if (paused) {
-      wasPaused = true
-      paused = false
-    }
-  }
 
   // if ('PresentationRequest' in window) {
   //   const handleAvailability = aval => {
@@ -161,9 +111,9 @@
       }
     } else {
       src = ''
-      video?.load()
       currentTime = 0
       targetTime = 0
+      tick().then(() => video?.play())
     }
   }
 
@@ -183,8 +133,9 @@
       initSubs()
       src = file.url
       client.send('current', file)
-      video?.load()
       clearCanvas()
+      await tick()
+      video?.play()
     }
   }
 
@@ -245,7 +196,11 @@
   }
 
   function autoPlay () {
-    if (!miniplayer) video.play()
+    if (!miniplayer) {
+      video.play()
+    } else {
+      video.pause()
+    }
   }
   function playPause () {
     paused = !paused
@@ -389,16 +344,6 @@
     KeyR: {
       fn: () => seek(-90),
       id: '-90'
-    },
-    Comma: {
-      fn: async () => seek(-1 / (await video.fps) || 0),
-      id: 'fast_rewind',
-      type: 'icon'
-    },
-    Period: {
-      fn: async () => seek(1 / (await video.fps) || 0),
-      id: 'fast_forward',
-      type: 'icon'
     },
     KeyI: {
       fn: () => toggleStats(),
@@ -871,7 +816,6 @@
     crossorigin='anonymous'
     class='position-absolute h-full w-full'
     style={`margin-top: ${menubarOffset}px`}
-    autoplay
     preload='auto'
     {src}
     bind:videoHeight
@@ -896,7 +840,6 @@
     on:playing={hideBuffering}
     on:loadedmetadata={hideBuffering}
     on:ended={tryPlayNext}
-    on:loadedmetadata={getFPS}
     on:loadedmetadata={initThumbnails}
     on:loadedmetadata={autoPlay}
     on:loadedmetadata={checkAudio}
@@ -979,48 +922,47 @@
       <div class='ts mr-auto'>{toTS(targetTime, duration > 3600 ? 2 : 3)} / {toTS(duration - targetTime, duration > 3600 ? 2 : 3)}</div>
       {#if 'audioTracks' in HTMLVideoElement.prototype && video?.audioTracks?.length > 1}
         <div class='dropdown dropup with-arrow' on:click={toggleDropdown}>
-          <span class='material-icons ctrl' title='Audio Tracks' id='baudio' data-toggle='dropdown' aria-haspopup='true' aria-expanded='false' data-name='audioButton'>
+          <span class='material-icons ctrl' title='Audio Tracks'>
             queue_music
           </span>
-          <div class='dropdown-menu dropdown-menu-left ctrl custom-radio p-10 pb-5 text-capitalize' aria-labelledby='baudio' data-name='selectAudio'>
+          <div class='dropdown-menu dropdown-menu-left ctrl custom-radio p-10 pb-5 text-capitalize'>
             {#each video.audioTracks as track}
               <input name='audio-radio-set' type='radio' id='audio-{track.id}-radio' value={track.id} checked={track.enabled} />
-              <label for='audio-{track.id}-radio' on:click={() => selectAudio(track.id)} class='text-truncate pb-5'>
-                {(track.language || (!Object.values(video.audioTracks).some(track => track.language === 'eng' || track.language === 'en') ? 'eng' : track.label)) +
-                  (track.label ? ' - ' + track.label : '')}</label>
+              <label for='audio-{track.id}-radio' on:click|stopPropagation={() => selectAudio(track.id)} class='text-truncate pb-5'>
+                {(track.language || (!Object.values(video.audioTracks).some(track => track.language === 'eng' || track.language === 'en') ? 'eng' : track.label)) + (track.label ? ' - ' + track.label : '')}
+              </label>
             {/each}
           </div>
         </div>
       {/if}
       {#if 'videoTracks' in HTMLVideoElement.prototype && video?.videoTracks?.length > 1}
         <div class='dropdown dropup with-arrow'>
-          <span class='material-icons ctrl' title='Video Tracks' id='bvideo' data-toggle='dropdown' aria-haspopup='true' aria-expanded='false' data-name='videoButton'>
+          <span class='material-icons ctrl' title='Video Tracks'>
             playlist_play
           </span>
-          <div class='dropdown-menu dropdown-menu-left ctrl custom-radio p-10 pb-5 text-capitalize' aria-labelledby='bvideo' data-name='selectVideo'>
+          <div class='dropdown-menu dropdown-menu-left ctrl custom-radio p-10 pb-5 text-capitalize'>
             {#each video.videoTracks as track}
               <input name='video-radio-set' type='radio' id='video-{track.id}-radio' value={track.id} checked={track.selected} />
-              <label for='video-{track.id}-radio' on:click={() => selectVideo(track.id)} class='text-truncate pb-5'>
-                {(track.language || (!Object.values(video.videoTracks).some(track => track.language === 'eng' || track.language === 'en') ? 'eng' : track.label)) +
-                  (track.label ? ' - ' + track.label : '')}</label>
+              <label for='video-{track.id}-radio' on:click|stopPropagation={() => selectVideo(track.id)} class='text-truncate pb-5'>
+                {(track.language || (!Object.values(video.videoTracks).some(track => track.language === 'eng' || track.language === 'en') ? 'eng' : track.label)) + (track.label ? ' - ' + track.label : '')}
+              </label>
             {/each}
           </div>
         </div>
       {/if}
       {#if subHeaders?.length}
         <div class='subtitles dropdown dropup with-arrow' on:click={toggleDropdown}>
-          <span class='material-icons ctrl' title='Subtitles [C]' id='bcap' data-toggle='dropdown' aria-haspopup='true' aria-expanded='false' data-name='captionsButton'>
+          <span class='material-icons ctrl' title='Subtitles [C]'>
             subtitles
           </span>
-          <div class='dropdown-menu dropdown-menu-right ctrl custom-radio p-10 pb-5 text-capitalize w-200' aria-labelledby='bcap' data-name='selectCaptions'>
+          <div class='dropdown-menu dropdown-menu-right ctrl custom-radio p-10 pb-5 text-capitalize w-200'>
             <input name='subtitle-radio-set' type='radio' id='subtitle-off-radio' value='off' checked={subHeaders && subs?.current === -1} />
-            <label for='subtitle-off-radio' on:click={() => subs.selectCaptions(-1)} class='text-truncate pb-5'> OFF </label>
+            <label for='subtitle-off-radio' on:click|stopPropagation={() => subs.selectCaptions(-1)} class='text-truncate pb-5'> OFF </label>
             {#each subHeaders as track}
               {#if track}
                 <input name='subtitle-radio-set' type='radio' id='subtitle-{track.number}-radio' value={track.numer} checked={track.number === subs.current} />
                 <label for='subtitle-{track.nubmer}-radio' on:click={() => subs.selectCaptions(track.number)} class='text-truncate pb-5'>
-                  {(track.language || (!Object.values(subs.headers).some(header => header.language === 'eng' || header.language === 'en') ? 'eng' : track.type)) +
-                    (track.name ? ' - ' + track.name : '')}
+                  {(track.language || (!Object.values(subs.headers).some(header => header.language === 'eng' || header.language === 'en') ? 'eng' : track.type)) + (track.name ? ' - ' + track.name : '')}
                 </label>
               {/if}
             {/each}

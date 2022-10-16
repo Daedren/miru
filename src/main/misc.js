@@ -73,13 +73,31 @@ ipcMain.on('version', (event) => {
   event.sender.send('version', app.getVersion()) // fucking stupid
 })
 
+var shotsPerFilename = {}
 ipcMain.on('save-file', (event, data) => {
   const buffer = Buffer.from(data.data)
-  const filePath = path.join(data.folder, data.name)
-  fs.writeFile(filePath, buffer, err => {
-    event.reply('save-file-reply', err)
-  })
+  saveFile(buffer, event, data)
 })
+
+function saveFile(buffer, event, data) {
+  const shotNumber = (shotsPerFilename[data.name] || 0) + 1
+  shotsPerFilename[data.name] = shotNumber
+  const shortNumberAsString = String(shotNumber).padStart(4, '0')
+  const filenameToSave = `${data.name}-${shortNumberAsString}.png`
+  const filePath = path.join(data.folder, filenameToSave)
+
+  fs.writeFile(filePath, buffer, { flag: "wx" }, err => {
+    if (err) {
+      if (err.code === 'EEXIST') {
+        saveFile(buffer, event, data)
+      } else {
+        event.reply('save-file-reply', {filename: filePath, error: err })
+      }
+    } else {
+      event.reply('save-file-reply', {filename: filePath, error: err })
+    }
+  })
+}
 
 autoUpdater.logger = log
 autoUpdater.logger.transports.file.level = 'info'

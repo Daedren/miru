@@ -7,18 +7,18 @@ export const ScreenshotLocation = {
 export const ScreenshotLocations = [ScreenshotLocation.Clipboard, ScreenshotLocation.Filesystem]
 export const ScreenshotLocationDefault = ScreenshotLocation.Clipboard
 
-var shotsPerFilename = {}
 
-window.IPC.on('save-file-reply', err => {
-  console.log(err)
-  if (err) {
+console.log("Wewgggewe running ScreenshotJS!")
+
+window.IPC.on('save-file-reply', result => {
+  console.log(result)
+  if (result.err) {
     addToast({
-      text: `Could not save screenshot - ${err}`,
+      text: `Could not save screenshot - ${result.err}`,
       title: 'Screenshot',
       type: 'danger'
     })
   } else {
-    shotsPerFilename[filename] = shotNumber
     addToast({
       text: 'Saved screenshot to filesystem.',
       title: 'Screenshot',
@@ -54,12 +54,8 @@ export async function takeScreenshot(video, subs, filename) {
 }
 
 async function saveToFilesystem(blob, filename, location) {
-  const shotNumber = (shotsPerFilename[filename] || 0) + 1
-
-  const shortNumberAsString = String(shotNumber).padStart(4, '0')
-  const filenameToSave = `${filename}-${shortNumberAsString}.png`
   const arr = await blob.arrayBuffer()
-  window.IPC.emit('save-file', { data: arr, name: filenameToSave, folder: location })
+  window.IPC.emit('save-file', { data: arr, name: filename, folder: location })
 }
 
 async function saveToClipboard(blob) {

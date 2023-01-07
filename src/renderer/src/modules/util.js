@@ -71,3 +71,23 @@ export function generateRandomHexCode (len) {
 
   return hexCode
 }
+
+export function throttle (cb, limit) {
+  let wait = false
+  return () => {
+    if (!wait) {
+      cb()
+      wait = true
+      setTimeout(() => {
+        cb()
+        wait = false
+      }, limit)
+    }
+  }
+}
+
+export function wrapEnter (fn) {
+  return ({ key }) => {
+    if (key === 'Enter') fn()
+  }
+}

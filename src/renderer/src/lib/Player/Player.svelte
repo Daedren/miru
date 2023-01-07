@@ -1,12 +1,12 @@
 <script>
+  /* eslint svelte/valid-compile: ["error", { ignoreWarnings: true }] */
   import { set } from '../Settings.svelte'
   import { playAnime } from '../RSSView.svelte'
   import { client } from '@/modules/torrent.js'
   import { onMount, createEventDispatcher, tick } from 'svelte'
   import { alEntry } from '@/modules/anilist.js'
-  // import Peer from '@/modules/Peer.js'
   import Subtitles from '@/modules/subtitles.js'
-  import { toTS, videoRx, fastPrettyBytes } from '@/modules/util.js'
+  import { toTS, videoRx, fastPrettyBytes, throttle } from '@/modules/util.js'
   import { addToast } from '../Toasts.svelte'
   import { takeScreenshot } from '@/lib/Screenshot.js'
 
@@ -67,6 +67,7 @@
   let volume = localStorage.getItem('volume') || 1
   let playbackRate = 1
   $: localStorage.setItem('volume', volume || 0)
+  $: safeduration = (isFinite(duration) ? duration : currentTime) || 0
 
   function checkAudio () {
     if ('audioTracks' in HTMLVideoElement.prototype && !video.audioTracks.length) {
@@ -127,6 +128,7 @@
       })
       currentTime = 0
       targetTime = 0
+      chapters = []
       completed = false
       current = file
       emit('current', current)
@@ -180,19 +182,22 @@
   }
 
   let currentTime = 0
-  $: progress = currentTime / duration
+  $: progress = currentTime / safeduration
+  let throttledProgress = 0
+  const progCb = throttle(() => { throttledProgress = progress }, 200)
+  $: progCb(progress)
   $: targetTime = (!paused && currentTime) || targetTime
   function handleMouseDown ({ target }) {
     wasPaused = paused
     paused = true
-    targetTime = target.value * duration
+    targetTime = target.value * safeduration
   }
   function handleMouseUp () {
     paused = wasPaused
     currentTime = targetTime
   }
   function handleProgress ({ target }) {
-    targetTime = target.value * duration
+    targetTime = target.value * safeduration
   }
 
   function autoPlay () {
@@ -248,14 +253,26 @@
   function toggleFullscreen () {
     document.fullscreenElement ? document.exitFullscreen() : container.requestFullscreen()
   }
-  function seek (time) {
-    if (time === 85 && currentTime < 10) {
-      currentTime = currentTime = 90
-    } else if (time === 85 && duration - currentTime < 90) {
-      currentTime = currentTime = duration
+  function skip () {
+    const current = findChapter(currentTime)
+    if (current) {
+      if (!isChapterSkippable(current)) return
+      const endtime = current.end / 1000
+      if ((safeduration - endtime | 0) === 0) return playNext()
+      currentTime = endtime
+      currentSkippable = null
+    } else if (currentTime < 10) {
+      currentTime = 90
+    } else if (safeduration - currentTime < 90) {
+      currentTime = safeduration
     } else {
-      currentTime = currentTime += time
+      currentTime = currentTime + 85
     }
+    targetTime = currentTime
+    video.currentTime = targetTime
+  }
+  function seek (time) {
+    currentTime = currentTime + time
     targetTime = currentTime
     video.currentTime = targetTime
   }
@@ -341,10 +358,6 @@
       id: 'screenshot_monitor',
       type: 'icon'
     },
-    KeyR: {
-      fn: () => seek(-90),
-      id: '-90'
-    },
     KeyI: {
       fn: () => toggleStats(),
       id: 'list',
@@ -386,7 +399,7 @@
       type: 'icon'
     },
     KeyS: {
-      fn: () => seek(85),
+      fn: () => skip(),
       id: '+90'
     },
     KeyD: {
@@ -542,9 +555,9 @@
     }, 150)
   }
   $: navigator.mediaSession?.setPositionState({
-    duration: Math.max(0, duration || 0),
+    duration: Math.max(0, safeduration || 0),
     playbackRate: 1,
-    position: Math.max(0, Math.min(duration || 0, currentTime || 0))
+    position: Math.max(0, Math.min(safeduration || 0, currentTime || 0))
   })
 
   if ('mediaSession' in navigator) {
@@ -590,11 +603,43 @@
   }
   function getBufferHealth (time) {
     for (let index = video.buffered.length; index--;) {
-      if (time < video.buffered.end(index) && time > video.buffered.start(index)) {
+      if (time < video.buffered.end(index) && time >= video.buffered.start(index)) {
         return parseInt(video.buffered.end(index) - time)
       }
     }
     return 0
+  }
+  let chapters = []
+  client.on('chapters', ({ detail }) => {
+    chapters = detail
+  })
+  let hoverChapter = null
+
+  let currentSkippable = null
+  function checkSkippableChapters () {
+    const current = findChapter(currentTime)
+    if (current) {
+      currentSkippable = isChapterSkippable(current)
+    }
+  }
+  const skippableChaptersRx = [
+    ['Opening', /^op$|opening$|^ncop/mi],
+    ['Ending', /^ed$|ending$|^nced/mi],
+    ['Recap', /recap/mi]
+  ]
+  function isChapterSkippable (chapter) {
+    for (const [name, regex] of skippableChaptersRx) {
+      if (regex.test(chapter.text)) {
+        return name
+      }
+    }
+    return null
+  }
+  function findChapter (time) {
+    if (!chapters.length) return null
+    for (const chapter of chapters) {
+      if (time < (chapter.end / 1000) && time >= (chapter.start / 1000)) return chapter
+    }
   }
   const thumbCanvas = document.createElement('canvas')
   thumbCanvas.width = 200
@@ -610,7 +655,8 @@
   let hoverOffset = 0
   function handleHover ({ offsetX, target }) {
     hoverOffset = offsetX / target.clientWidth
-    hoverTime = duration * hoverOffset
+    hoverTime = safeduration * hoverOffset
+    hoverChapter = findChapter(hoverTime)
     hover.style.setProperty('left', hoverOffset * 100 + '%')
     thumbnail = thumbnailData.thumbnails[Math.floor(hoverTime / thumbnailData.interval)] || ' '
   }
@@ -628,7 +674,7 @@
   function initThumbnails () {
     const height = 200 / (videoWidth / videoHeight)
     if (!isNaN(height)) {
-      thumbnailData.interval = duration / 300 < 5 ? 5 : duration / 300
+      thumbnailData.interval = safeduration / 300 < 5 ? 5 : safeduration / 300
       thumbnailData.canvas.height = height
     }
   }
@@ -698,8 +744,8 @@
   let completed = false
   function checkCompletion () {
     if (!completed) {
-      const fromend = Math.max(180, duration / 10)
-      if (duration && currentTime && video?.readyState && duration - fromend < currentTime) {
+      const fromend = Math.max(180, safeduration / 10)
+      if (safeduration && currentTime && video?.readyState && safeduration - fromend < currentTime) {
         if (media?.media?.episodes || media?.media?.nextAiringEpisode?.episode) {
           if (media.media.episodes || media.media.nextAiringEpisode?.episode > media.episode) {
             completed = true
@@ -834,6 +880,7 @@
     on:seeked={updatew2g}
     on:timeupdate={() => createThumbnail()}
     on:timeupdate={checkCompletion}
+    on:timeupdate={checkSkippableChapters}
     on:waiting={showBuffering}
     on:loadeddata={hideBuffering}
     on:canplay={hideBuffering}
@@ -871,38 +918,49 @@
     <span class='material-icons ctrl' title='Keybinds [`]' on:click={() => (showKeybinds = true)}> help_outline </span>
   </div>
   <div class='middle d-flex align-items-center justify-content-center flex-grow-1 position-relative'>
-    <div class='position-absolute w-full h-full' on:dblclick={toggleFullscreen} on:click|self={() => (page = 'player')}>
-      <div class='play-overlay w-full h-full' on:click={playPause} />
-    </div>
+    <div class='w-full h-full position-absolute' on:dblclick={toggleFullscreen} on:click|self={() => { if (page === 'player') playPause(); page = 'player' }} />
     <span class='material-icons ctrl' class:text-muted={!hasLast} class:disabled={!hasLast} data-name='playLast' on:click={playLast}> skip_previous </span>
     <span class='material-icons ctrl' data-name='rewind' on:click={rewind}> fast_rewind </span>
     <span class='material-icons ctrl' data-name='playPause' on:click={playPause}> {ended ? 'replay' : paused ? 'play_arrow' : 'pause'} </span>
     <span class='material-icons ctrl' data-name='forward' on:click={forward}> fast_forward </span>
     <span class='material-icons ctrl' class:text-muted={!hasNext} class:disabled={!hasNext} data-name='playNext' on:click={playNext}> skip_next </span>
-    <div data-name='bufferingDisplay' class='position-absolute' />
+    <div class='position-absolute bufferingDisplay' />
+    {#if currentSkippable}
+      <button class='skip btn text-dark position-absolute bottom-0 right-0 mr-20 mb-5 font-weight-bold' on:click={skip}>
+        Skip {currentSkippable}
+      </button>
+    {/if}
   </div>
   <div class='bottom d-flex z-40 flex-column px-20'>
     <div class='w-full d-flex align-items-center h-20 mb--5'>
       <div class='w-full h-full position-relative d-flex align-items-center'>
         <canvas class='position-absolute buffer w-full' height='1px' bind:this={bufferCanvas} />
         <input
-          class='ctrl w-full h-full prog'
+          class='ctrl w-full h-full prog custom-range'
           type='range'
           min='0'
           max='1'
           step='any'
           data-name='setProgress'
-          bind:value={progress}
+          bind:value={throttledProgress}
           on:mousedown={handleMouseDown}
           on:mouseup={handleMouseUp}
           on:mousemove={handleHover}
           on:input={handleProgress}
           on:touchstart={handleMouseDown}
           on:touchend={handleMouseUp}
-          on:keydown|preventDefault
-          style='--value: {progress * 100}%' />
+          on:keydown|preventDefault />
+        <datalist class='d-flex position-absolute w-full'>
+          {#each chapters.slice(1) as chapter}
+            {@const value = chapter.start / 1000 / safeduration}
+            <option {value} style:left={value * 100 + '%'} class='position-absolute' />
+          {/each}
+        </datalist>
         <div class='hover position-absolute d-flex flex-column align-items-center' bind:this={hover}>
           <img alt='thumbnail' class='w-full mb-5 shadow-lg' src={thumbnail} />
+          {#if hoverChapter}
+            <div class='ts'>{hoverChapter.text}</div>
+          {/if}
           <div class='ts'>{toTS(hoverTime)}</div>
         </div>
       </div>
@@ -917,9 +975,9 @@
       {/if}
       <div class='d-flex w-auto volume'>
         <span class='material-icons ctrl' title='Mute [M]' data-name='toggleMute' on:click={toggleMute}> {muted ? 'volume_off' : 'volume_up'} </span>
-        <input class='ctrl' type='range' min='0' max='1' step='any' data-name='setVolume' bind:value={volume} style='--value: {volume * 100}%' />
+        <input class='ctrl h-full custom-range' type='range' min='0' max='1' step='any' data-name='setVolume' bind:value={volume} />
       </div>
-      <div class='ts mr-auto'>{toTS(targetTime, duration > 3600 ? 2 : 3)} / {toTS(duration - targetTime, duration > 3600 ? 2 : 3)}</div>
+      <div class='ts mr-auto'>{toTS(targetTime, safeduration > 3600 ? 2 : 3)} / {toTS(safeduration - targetTime, safeduration > 3600 ? 2 : 3)}</div>
       {#if 'audioTracks' in HTMLVideoElement.prototype && video?.audioTracks?.length > 1}
         <div class='dropdown dropup with-arrow' on:click={toggleDropdown}>
           <span class='material-icons ctrl' title='Audio Tracks'>
@@ -988,6 +1046,92 @@
 </div>
 
 <style>
+  .custom-range {
+    color: #ff3c00;
+    --thumb-height: 0px;
+    --track-height: 3px;
+    --track-color: rgba(255, 255, 255, 0.2);
+    --brightness-hover: 120%;
+    --brightness-down: 80%;
+    --clip-edges: 2px;
+    --target-height: max(var(--track-height), var(--thumb-height));
+    position: relative;
+    background: #fff0;
+    overflow: hidden;
+    transition: all ease 100ms;
+    appearance: none;
+  }
+
+  datalist option {
+    background: rgba(255, 255, 255, 0.2);
+    top: 5px;
+    min-height: unset;
+    height: 6px;
+    width: 2px;
+    padding: 0
+  }
+  .custom-range:hover {
+    --thumb-height: 12px;
+  }
+  .prog {
+    --track-color: #1110 !important
+  }
+
+  .custom-range:active {
+    cursor: grabbing;
+  }
+  .custom-range::-webkit-slider-runnable-track {
+    height: var(--target-height);
+    position: relative;
+        background: linear-gradient(var(--track-color) 0 0) scroll no-repeat center /
+      100% calc(var(--track-height));
+  }
+
+  .custom-range::-webkit-slider-thumb {
+    position: relative;
+    height: var(--thumb-height);
+    width: var(--thumb-width, var(--thumb-height));
+    -webkit-appearance: none;
+    --thumb-radius: calc((var(--target-height) * 0.5) - 1px);
+    --clip-top: calc((var(--target-height) - var(--track-height)) * 0.5);
+    --clip-bottom: calc(var(--target-height) - var(--clip-top));
+    --clip-further: calc(100% + 1px);
+    --box-fill: calc(-100vmax - var(--thumb-width, var(--thumb-height))) 0 0
+      100vmax currentColor;
+
+    background: linear-gradient(currentColor 0 0) scroll no-repeat left center /
+      50% calc(var(--track-height) + 1px);
+    background-color: currentColor;
+    box-shadow: var(--box-fill);
+    border-radius: var(--thumb-width, var(--thumb-height));
+
+    filter: brightness(100%);
+    clip-path: polygon(
+      100% -1px,
+      var(--clip-edges) -1px,
+      0 var(--clip-top),
+      -100vmax var(--clip-top),
+      -100vmax var(--clip-bottom),
+      0 var(--clip-bottom),
+      var(--clip-edges) 100%,
+      var(--clip-further) var(--clip-further)
+    );
+  }
+
+  .custom-range:hover::-webkit-slider-thumb {
+    filter: brightness(var(--brightness-hover));
+    cursor: grab;
+  }
+
+  .custom-range:active::-webkit-slider-thumb {
+    filter: brightness(var(--brightness-down));
+    cursor: grabbing;
+  }
+
+  .custom-range:focus {
+    outline: none;
+  }
+
   .bind {
     font-size: 1.8rem;
     font-weight: bold;
@@ -1012,9 +1156,10 @@
   }
   .miniplayer {
     height: auto !important;
+    cursor: pointer !important;
   }
   .miniplayer .top,
-  .miniplayer .bottom {
+  .miniplayer .bottom, .miniplayer .skip {
     display: none !important;
   }
   .miniplayer video {
@@ -1068,7 +1213,7 @@
 
   .immersed .middle .ctrl,
   .immersed .top,
-  .immersed .bottom {
+  .immersed .bottom, .immersed .skip {
     opacity: 0;
   }
 
@@ -1081,7 +1226,7 @@
     opacity: 0.1%;
   }
 
-  .middle div[data-name='bufferingDisplay'] {
+  .middle .bufferingDisplay {
     border: 4px solid #ffffff00;
     border-top: 4px solid #fff;
     border-radius: 50%;
@@ -1089,6 +1234,7 @@
     height: 40px;
     animation: spin 1s linear infinite;
     opacity: 0;
+    visibility: hidden;
     transition: 0.5s opacity ease;
     filter: drop-shadow(0 0 8px #000);
   }
@@ -1096,8 +1242,12 @@
     cursor: not-allowed !important;
   }
 
-  .buffering .middle div[data-name='bufferingDisplay'] {
+  .buffering .middle .bufferingDisplay {
     opacity: 1 !important;
+    visibility: visible !important;
+  }
+  .pip .bufferingDisplay {
+    display: none;
   }
 
   @keyframes spin {
@@ -1139,9 +1289,6 @@
     font-size: 2.8rem;
     margin: 0.6rem;
   }
-  .miniplayer .middle .play-overlay {
-    display: none !important;
-  }
   .miniplayer .middle .ctrl[data-name='playPause'] {
     font-size: 5.625rem;
   }
@@ -1158,6 +1305,13 @@
   .bottom .hover .ts {
     filter: drop-shadow(0 0 8px #000);
   }
+  .skip {
+    transition: 0.5s opacity ease;
+    background: #ececec;
+  }
+  .skip:hover {
+    background-color: var(--lm-button-bg-color-hover);
+  }
 
   .bottom {
     background: linear-gradient(to top, rgba(0, 0, 0, 0.8), rgba(0, 0, 0, 0.6) 25%, rgba(0, 0, 0, 0.4) 50%, rgba(0, 0, 0, 0.1) 75%, transparent);
@@ -1172,79 +1326,17 @@
     cursor: pointer;
   }
 
-  input[type='range'] {
-    -webkit-appearance: none;
-    background: transparent;
-    margin: 0;
-    cursor: pointer;
-    height: 8px;
-  }
-
-  input[type='range']:focus {
-    outline: none;
-  }
-
-  input[type='range']::-webkit-slider-runnable-track {
-    height: 3px;
-  }
-
-  input[type='range']::-moz-range-track {
-    height: 3px;
-    border: none;
-  }
-
-  input[type='range']::-webkit-slider-thumb {
-    height: 0;
-    width: 0;
-    border-radius: 50%;
-    background: #ff3c00;
-    -webkit-appearance: none;
-    appearance: none;
-    transition: all 0.1s ease;
-  }
-  input[type='range']::-moz-range-thumb {
-    height: 0;
-    width: 0;
-    border-radius: 50%;
-    background: #ff3c00;
-    -webkit-appearance: none;
-    appearance: none;
-    transition: all 0.1s ease;
-    border: none;
-  }
-
-  input[type='range']:hover::-webkit-slider-thumb {
-    height: 12px;
-    width: 12px;
-    margin-top: -4px;
-  }
-
-  input[type='range']:hover::-moz-range-thumb {
-    height: 12px;
-    width: 12px;
-    margin-top: -4px;
-  }
-
-  input[type='range']::-moz-range-track {
-    background: linear-gradient(90deg, #ff3c00 var(--value), rgba(255, 255, 255, 0.2) var(--value));
-  }
-  input[type='range']::-webkit-slider-runnable-track {
-    background: linear-gradient(90deg, #ff3c00 var(--value), rgba(255, 255, 255, 0.2) var(--value));
-  }
-  input[type='range'].prog::-webkit-slider-runnable-track {
-    background: linear-gradient(90deg, #ff3c00 var(--value), #00000000 var(--value)) !important;
-  }
   canvas.buffer {
     height: 3px;
     z-index: -1;
   }
-  .bottom .volume:hover input[type='range'] {
+  .bottom .volume:hover .custom-range {
     width: 5vw;
     display: inline-block;
     margin-right: 1.125rem;
   }
 
-  .bottom .volume input[type='range'] {
+  .bottom .volume .custom-range {
     width: 0;
     transition: width 0.1s ease;
     height: 100%;

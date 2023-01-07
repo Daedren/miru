@@ -4,6 +4,7 @@ const pump = require('pump')
 const rangeParser = require('range-parser')
 const mime = require('mime')
 const { SubtitleParser, SubtitleStream } = require('matroska-subtitles')
+const { ipcRenderer } = require('electron')
 
 class TorrentClient extends WebTorrent {
   constructor (settings) {
@@ -17,6 +18,7 @@ class TorrentClient extends WebTorrent {
     this.current = null
     this.parsed = false
     this.parserInstance = null
+    this.boundParse = this.parseSubtitles.bind(this)
 
     setInterval(() => {
       this.dispatch('stats', {
@@ -28,22 +30,7 @@ class TorrentClient extends WebTorrent {
     setInterval(() => {
       if (this.torrents[0]?.pieces) this.dispatch('pieces', [...this.torrents[0]?.pieces.map(piece => piece === null ? 77 : 33)])
     }, 2000)
-    this.on('torrent', torrent => {
-      const files = torrent.files.map(file => {
-        return {
-          infoHash: torrent.infoHash,
-          name: file.name,
-          type: file._getMimeType(),
-          size: file.size,
-          path: file.path,
-          url: encodeURI(`http://localhost:${this.server.address().port}/webtorrent/${torrent.infoHash}/${file.path}`)
-        }
-      })
-      this.dispatch('files', files)
-      this.dispatch('pieces', torrent.pieces.length)
-      this.dispatch('magnet', { magnet: torrent.magnetURI, hash: torrent.infoHash })
-      this.dispatch('torrent', Array.from(torrent.torrentFile))
-    })
+    this.on('torrent', this.handleTorrent.bind(this))
 
     this.server = http.createServer((request, response) => {
       if (!request.url) return null
@@ -96,33 +83,51 @@ class TorrentClient extends WebTorrent {
     this.server.on('error', console.warn)
 
     this.server.listen(0)
+  }
 
-    onmessage = this.handleMessage.bind(this)
+  handleTorrent (torrent) {
+    const files = torrent.files.map(file => {
+      return {
+        infoHash: torrent.infoHash,
+        name: file.name,
+        type: file._getMimeType(),
+        size: file.size,
+        path: file.path,
+        url: encodeURI(`http://localhost:${this.server.address().port}/webtorrent/${torrent.infoHash}/${file.path}`)
+      }
+    })
+    this.dispatch('files', files)
+    this.dispatch('pieces', torrent.pieces.length)
+    this.dispatch('magnet', { magnet: torrent.magnetURI, hash: torrent.infoHash })
+    this.dispatch('torrent', Array.from(torrent.torrentFile))
   }
 
   handleMessage ({ data }) {
     switch (data.type) {
       case 'current': {
-        this.current?.removeListener('done', this.parseSubtitles.bind(this))
+        this.current?.removeListener('done', this.boundParse)
+        this.cancelParse()
         this.parserInstance?.destroy()
         this.parserInstance = null
         this.current = null
         this.parsed = false
-        if (data) {
+        if (data.data) {
           this.current = this?.get(data.data.infoHash)?.files.find(file => file.path === data.data.path)
           if (this.current?.name.endsWith('.mkv')) {
-            if (this.current.done) this.parseSubtitles()
-            this.current.on('done', this.parseSubtitles.bind(this))
+            // if (this.current.done) this.parseSubtitles()
+            // this.current.once('done', this.boundParse)
             this.parseFonts(this.current)
           }
-          // findSubtitleFiles(current) TODO:
+          // TODO: findSubtitleFiles(current)
         }
         break
       }
       case 'torrent': {
+        const id = typeof data.data !== 'string' ? Buffer.from(data.data) : data.data
+        const existing = this.get(id)
+        if (existing) return this.handleTorrent(existing)
         if (this.torrents.length) this.remove(this.torrents[0].infoHash)
 
-        const id = typeof data.data !== 'string' ? Buffer.from(data.data) : data.data
         this.add(id, {
           private: this.settings.torrentPeX,
           path: this.settings.torrentPath,
@@ -139,7 +144,7 @@ class TorrentClient extends WebTorrent {
   }
 
   dispatch (type, data) {
-    postMessage({ type, data })
+    message({ type, data })
   }
 
   parseSubtitles () {
@@ -149,9 +154,9 @@ class TorrentClient extends WebTorrent {
       const finish = () => {
         console.log('Sub parsing finished')
         this.parsed = true
+        this.parser?.destroy()
+        this.parser = undefined
         fileStream?.destroy()
-        stream?.destroy()
-        stream = undefined
       }
       parser.once('tracks', tracks => {
         if (!tracks.length) finish()
@@ -159,8 +164,13 @@ class TorrentClient extends WebTorrent {
       parser.once('finish', finish)
       console.log('Sub parsing started')
       const fileStream = this.current.createReadStream()
-      let stream = fileStream.pipe(parser)
+      this.parser = fileStream.pipe(parser)
     }
+  }
+
+  cancelParse () {
+    this.parser?.destroy()
+    this.parser = undefined
   }
 
   parseFonts (file) {
@@ -194,6 +204,9 @@ class TorrentClient extends WebTorrent {
       this.dispatch('subtitle', { subtitle, trackNumber })
     })
     if (!skipFile) {
+      parser.once('chapters', chapters => {
+        this.dispatch('chapters', chapters)
+      })
       parser.on('file', file => {
         if (file.mimetype === 'application/x-truetype-font' || file.mimetype === 'application/font-woff' || file.mimetype === 'application/vnd.ms-opentype' || file.mimetype === 'font/sfnt' || file.mimetype.startsWith('font/') || file.filename.toLowerCase().endsWith('.ttf')) {
           this.dispatch('file', { mimetype: file.mimetype, data: Array.from(file.data) })
@@ -205,12 +218,21 @@ class TorrentClient extends WebTorrent {
   predestroy () {
     this.destroy()
     this.server.close()
+    this.parser?.destroy()
+    this.parser = undefined
   }
 }
 
 let client = null
+let message = null
 
-onmessage = ({ data }) => {
-  if (!client && data.type === 'settings') client = new TorrentClient(data.data)
-  if (data.type === 'destroy') client?.predestroy()
-}
+ipcRenderer.on('port', (e) => {
+  e.ports[0].onmessage = ({ data }) => {
+    const cloned = structuredClone(data)
+    if (!client && cloned.type === 'settings') window.client = client = new TorrentClient(cloned.data)
+    if (cloned.type === 'destroy') client?.predestroy()
+
+    client.handleMessage({ data: cloned })
+  }
+  message = e.ports[0].postMessage.bind(e.ports[0])
+})

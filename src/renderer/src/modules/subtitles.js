@@ -2,12 +2,13 @@ import JASSUB from 'jassub'
 import workerUrl from 'jassub/dist/jassub-worker.js?url'
 import 'jassub/dist/jassub-worker.wasm?url'
 import { toTS, videoRx, subRx } from './util.js'
+import { set } from '@/lib/Settings.svelte'
 
 import { client } from '@/modules/torrent.js'
 
 const defaultHeader = `[V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default, Roboto Medium,26,&H00FFFFFF,&H000000FF,&H00020713,&H00000000,0,0,0,0,100,100,0,0,1,1.3,0,2,20,20,23,1
+Style: Default, ${set.font?.name || 'Roboto Medium'},26,&H00FFFFFF,&H000000FF,&H00020713,&H00000000,0,0,0,0,100,100,0,0,1,1.3,0,2,20,20,23,1
 [Events]
 
 `
@@ -67,15 +68,15 @@ export default class Subtitles {
           if (track.type !== 'ass') track.header = defaultHeader
           if (!this.current) {
             this.current = track.number
+            const styleMatches = track.header.match(stylesRx)
+            for (let i = 0; i < styleMatches.length; ++i) {
+              const style = styleMatches[i].replace('Style:', '').trim()
+              this._stylesMap[style] = i + 1
+            }
           }
           this.tracks[track.number] = []
           this._tracksString[track.number] = new Set()
           this.headers[track.number] = track
-          const styleMatches = track.header.match(stylesRx)
-          for (let i = 0; i < styleMatches.length; ++i) {
-            const style = styleMatches[i].replace('Style:', '').trim()
-            this._stylesMap[style] = i + 1
-          }
 
           this.onHeader()
         }
@@ -130,17 +131,21 @@ export default class Subtitles {
 
   initSubtitleRenderer () {
     if (!this.renderer) {
-      this.renderer = new JASSUB({
+      const options = {
         video: this.video,
         subContent: this.headers[this.current].header.slice(0, -1),
         fonts: this.fonts,
-        fallbackFont: 'roboto medium',
+        fallbackFont: set.font?.name || 'roboto medium',
         availableFonts: {
           'roboto medium': './Roboto.ttf'
         },
-        useLocalFonts: true,
-        workerUrl
-      })
+        workerUrl,
+        useLocalFonts: set.missingFont
+      }
+      if (set.font) {
+        options.availableFonts[set.font.name.toLowerCase()] = new Uint8Array(set.font.data)
+      }
+      this.renderer = new JASSUB(options)
       this.selectCaptions(this.current)
     }
   }
@@ -251,8 +256,17 @@ export default class Subtitles {
       this.current = Number(trackNumber)
       this.onHeader()
       if (this.renderer && this.headers) {
+        const track = this.headers[this.current]
         this.renderer.setTrack(this.current !== -1 ? this.headers[this.current].header.slice(0, -1) : defaultHeader)
         if (this.tracks[this.current]) {
+          this._stylesMap = {
+            Default: 0
+          }
+          const styleMatches = track.header.match(stylesRx)
+          for (let i = 0; i < styleMatches.length; ++i) {
+            const style = styleMatches[i].replace('Style:', '').trim()
+            this._stylesMap[style] = i + 1
+          }
           for (const subtitle of this.tracks[this.current]) this.renderer.createEvent(subtitle)
         }
       }

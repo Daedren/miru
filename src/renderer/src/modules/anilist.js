@@ -1,28 +1,11 @@
 import { alToken } from '@/lib/Settings.svelte'
 import { addToast } from '@/lib/Toasts.svelte'
 import lavenshtein from 'js-levenshtein'
+import { sleep } from './util.js'
 
 import Bottleneck from 'bottleneck'
 
 const codes = {
-  100: 'Continue',
-  101: 'Switching Protocols',
-  102: 'Processing',
-  200: 'OK',
-  201: 'Created',
-  202: 'Accepted',
-  203: 'Non-Authoritative Information',
-  204: 'No Content',
-  205: 'Reset Content',
-  206: 'Partial Content',
-  207: 'Multi-Status',
-  300: 'Multiple Choices',
-  301: 'Moved Permanently',
-  302: 'Moved Temporarily',
-  303: 'See Other',
-  304: 'Not Modified',
-  305: 'Use Proxy',
-  307: 'Temporary Redirect',
   400: 'Bad Request',
   401: 'Unauthorized',
   402: 'Payment Required',
@@ -63,32 +46,34 @@ const codes = {
   511: 'Network Authentication Required'
 }
 
-export const alID = !!alToken && alRequest({ method: 'Viewer', token: alToken })
-if (alID) {
-  alID.then(result => {
-    const lists = result?.data?.Viewer?.mediaListOptions?.animeList?.customLists || []
-    if (!lists.includes('Watched using Miru')) {
-      alRequest({ method: 'CustomList', lists })
-    }
-  })
-}
+const limiter = new Bottleneck({
+  reservoir: 90,
+  reservoirRefreshAmount: 90,
+  reservoirRefreshInterval: 60 * 1000,
+  maxConcurrent: 15,
+  minTime: 400
+})
 
-function printError (error) {
-  console.warn(error)
-  addToast({
-    text: /* html */`Failed making request to anilist!<br>Try again in a minute.<br>${error.status} - ${error.message || codes[error.status]}`,
-    title: 'Search Failed',
-    type: 'danger',
-    duration: 3000
-  })
-}
+let rl = null
 
-const limiter = new Bottleneck({ maxConcurrent: 100, minTime: 600 })
-const limit = limiter.wrap(handleRequest)
+limiter.on('failed', async (error, jobInfo) => {
+  printError(error)
 
-async function handleRequest (opts) {
+  if (!error.statusText) {
+    if (!rl) rl = sleep(61 * 1000).then(() => { rl = null })
+    return 61 * 1000
+  }
+  const time = ((error.headers.get('retry-after') || 60) + 1) * 1000
+  if (!rl) rl = sleep(time).then(() => { rl = null })
+  return time
+})
+
+const handleRequest = limiter.wrap(async opts => {
+  await rl
   const res = await fetch('https://graphql.anilist.co', opts)
-  if (!res.ok && res.status === 429) return await limit(opts)
+  if (!res.ok && res.status === 429) {
+    throw res
+  }
   let json = null
   try {
     json = await res.json()
@@ -105,6 +90,27 @@ async function handleRequest (opts) {
     }
   }
   return json
+})
+
+export let alID = null
+if (alToken) {
+  alID = alRequest({ method: 'Viewer', token: alToken }).then(result => {
+    const lists = result?.data?.Viewer?.mediaListOptions?.animeList?.customLists || []
+    if (!lists.includes('Watched using Miru')) {
+      alRequest({ method: 'CustomList', lists })
+    }
+    return result
+  })
+}
+
+function printError (error) {
+  console.warn(error)
+  addToast({
+    text: /* html */`Failed making request to anilist!<br>Try again in a minute.<br>${error.status || 429} - ${error.message || codes[error.status || 429]}`,
+    title: 'Search Failed',
+    type: 'danger',
+    duration: 3000
+  })
 }
 
 export function alEntry (filemedia) {
@@ -149,7 +155,9 @@ export function alEntry (filemedia) {
 
 function getDistanceFromTitle (media, name) {
   if (media) {
-    const distances = [...Object.values(media.title), ...media.synonyms].filter(v => v).map(title => lavenshtein(title.toLowerCase(), name.toLowerCase()))
+    const titles = Object.values(media.title).filter(v => v).map(title => lavenshtein(title.toLowerCase(), name.toLowerCase()))
+    const synonyms = media.synonyms.filter(v => v).map(title => lavenshtein(title.toLowerCase(), name.toLowerCase()) + 2)
+    const distances = [...titles, ...synonyms]
     const min = distances.reduce((prev, curr) => prev < curr ? prev : curr)
     media.lavenshtein = min
     return media
@@ -167,13 +175,10 @@ export async function alSearch (method) {
 export async function alRequest (opts) {
   let query
   const variables = {
-    type: 'ANIME',
     sort: opts.sort || 'TRENDING_DESC',
     page: opts.page || 1,
     perPage: opts.perPage || 30,
-    status_in: opts.status_in || '[CURRENT,PLANNING]',
-    chunk: opts.chunk || 1,
-    perchunk: opts.perChunk || 30
+    status_in: opts.status_in || '[CURRENT,PLANNING]'
   }
   const options = {
     method: 'POST',
@@ -182,6 +187,7 @@ export async function alRequest (opts) {
       Accept: 'application/json'
     }
   }
+  const userId = (await alID)?.data?.Viewer.id
   const queryObjects = /* js */`
 id,
 title {
@@ -199,7 +205,7 @@ episodes,
 duration,
 averageScore,
 genres,
-coverImage {
+coverImage{
   extraLarge,
   medium,
   color
@@ -208,19 +214,19 @@ countryOfOrigin,
 isAdult,
 bannerImage,
 synonyms,
-nextAiringEpisode {
+nextAiringEpisode{
   timeUntilAiring,
   episode
 },
-trailer {
+trailer{
   id,
   site
 },
-streamingEpisodes {
+streamingEpisodes{
   title,
   thumbnail
 },
-mediaListEntry {
+mediaListEntry{
   id,
   progress,
   repeat,
@@ -229,37 +235,33 @@ mediaListEntry {
   score(format: POINT_10)
 },
 source,
-studios(isMain: true) {
+studios(isMain: true){
   nodes {
     name
   }
 },
-airingSchedule(page: 1, perPage: 1, notYetAired: true) {
+airingSchedule(page: 1, perPage: 1, notYetAired: true){
   nodes {
     episode
   }
 },
 relations {
   edges {
-    relationType(version:2)
+    relationType(version:2),
     node {
       id,
-      title {
-        userPreferred
-      },
-      coverImage {
-        medium
-      },
+      title{userPreferred},
+      coverImage{medium},
       type,
       status,
       format,
       episodes,
-      startDate {
+      startDate{
         year,
         month,
         day
       },
-      endDate {
+      endDate{
         year,
         month,
         day
@@ -267,15 +269,15 @@ relations {
     }
   }
 },
-recommendations {
-  edges {
-    node {
-      mediaRecommendation {
+recommendations{
+  edges{
+    node{
+      mediaRecommendation{
         id,
-        title {
+        title{
           userPreferred
         },
-        coverImage {
+        coverImage{
           medium
         }
       }
@@ -283,17 +285,17 @@ recommendations {
   }
 }`
   if (opts.status) variables.status = opts.status
-  if (localStorage.getItem('ALtoken')) options.headers.Authorization = alToken
+  if (alToken) options.headers.Authorization = alToken
   switch (opts.method) {
     case 'SearchName': {
       variables.search = opts.name
       query = /* js */` 
-query ($page: Int, $perPage: Int, $sort: [MediaSort], $type: MediaType, $search: String, $status: [MediaStatus]) {
-  Page (page: $page, perPage: $perPage) {
-    pageInfo {
+query($page: Int, $perPage: Int, $sort: [MediaSort], $search: String, $status: [MediaStatus]){
+  Page(page: $page, perPage: $perPage){
+    pageInfo{
       hasNextPage
     },
-    media(type: $type, search: $search, sort: $sort, status_in: $status, isAdult: false) {
+    media(type: ANIME, search: $search, sort: $sort, status_in: $status, isAdult: false){
       ${queryObjects}
     }
   }
@@ -302,21 +304,29 @@ query ($page: Int, $perPage: Int, $sort: [MediaSort], $type: MediaType, $search:
     } case 'SearchIDSingle': {
       variables.id = opts.id
       query = /* js */` 
-query ($id: Int, $type: MediaType) { 
-  Media (id: $id, type: $type) {
+query($id: Int){ 
+  Media(id: $id, type: ANIME){
     ${queryObjects}
   }
 }`
       break
     } case 'SearchIDS': {
       variables.id = opts.id
+      variables.onList = opts.onList
+      variables.status = opts.status
+      variables.genre = opts.genre
+      variables.search = opts.search
+      variables.year = opts.year
+      variables.season = opts.season
+      variables.format = opts.format
+      variables.sort = opts.sort
       query = /* js */` 
-query ($id: [Int], $type: MediaType, $page: Int, $perPage: Int) { 
-  Page (page: $page, perPage: $perPage) {
-    pageInfo {
+query($id: [Int], $page: Int, $perPage: Int, $status: [MediaStatus], $onList: Boolean, $sort: [MediaSort], $search: String, $season: MediaSeason, $year: Int, $genre: String, $format: MediaFormat){ 
+  Page(page: $page, perPage: $perPage){
+    pageInfo{
       hasNextPage
     },
-    media (id_in: $id, type: $type) {
+    media(id_in: $id, type: ANIME, status_in: $status, onList: $onList, search: $search, sort: $sort, season: $season, seasonYear: $year, genre: $genre, format: $format){
       ${queryObjects}
     }
   }
@@ -325,15 +335,15 @@ query ($id: [Int], $type: MediaType, $page: Int, $perPage: Int) {
     } case 'Viewer': {
       variables.id = alToken
       query = /* js */` 
-query {
-  Viewer {
-    avatar {
+query{
+  Viewer{
+    avatar{
       medium
     },
     name,
     id,
-    mediaListOptions {
-      animeList {
+    mediaListOptions{
+      animeList{
         customLists
       }
     }
@@ -341,27 +351,49 @@ query {
 }`
       break
     } case 'UserLists': {
-      variables.id = (await alID)?.data?.Viewer?.id
+      variables.id = userId
       query = /* js */` 
-query ($page: Int, $perPage: Int, $id: Int, $type: MediaType, $status_in: [MediaListStatus]){
-  Page (page: $page, perPage: $perPage) {
-    pageInfo {
+query($page: Int, $perPage: Int, $id: Int, $status_in: [MediaListStatus]){
+  Page(page: $page, perPage: $perPage){
+    pageInfo{
       hasNextPage
     },
-    mediaList (userId: $id, type: $type, status_in: $status_in, sort: UPDATED_TIME_DESC) {
-      media {
+    mediaList(userId: $id, type: ANIME, status_in: $status_in, sort: UPDATED_TIME_DESC){
+      media{
         ${queryObjects}
       }
     }
   }
 }`
       break
+    } case 'NewSeasons': {
+      variables.id = userId
+      query = /* js */` 
+query($id: Int){
+  MediaListCollection(userId: $id, status_in: [REPEATING, COMPLETED], type: ANIME, forceSingleCompletedList: true){
+    lists{
+      entries{
+        media{
+          relations{
+            edges{
+              relationType(version:2)
+              node{
+                id
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}`
+      break
     } case 'SearchIDStatus': {
-      variables.id = (await alID)?.data?.Viewer?.id
+      variables.id = userId
       variables.mediaId = opts.id
       query = /* js */` 
-query ($id: Int, $mediaId: Int){
-  MediaList(userId: $id, mediaId: $mediaId) {
+query($id: Int, $mediaId: Int){
+  MediaList(userId: $id, mediaId: $mediaId){
     status,
     progress,
     repeat
@@ -372,12 +404,12 @@ query ($id: Int, $mediaId: Int){
       variables.from = opts.from
       variables.to = (variables.from + 7 * 24 * 60 * 60)
       query = /* js */` 
-query ($page: Int, $perPage: Int, $from: Int, $to: Int) {
-  Page (page: $page, perPage: $perPage) {
-    pageInfo {
+query($page: Int, $perPage: Int, $from: Int, $to: Int){
+  Page(page: $page, perPage: $perPage){
+    pageInfo{
       hasNextPage
     },
-    airingSchedules(airingAt_greater: $from, airingAt_lesser: $to) {
+    airingSchedules(airingAt_greater: $from, airingAt_lesser: $to){
       episode,
       timeUntilAiring,
       airingAt,
@@ -396,12 +428,12 @@ query ($page: Int, $perPage: Int, $from: Int, $to: Int) {
       variables.format = opts.format
       variables.sort = opts.sort || 'SEARCH_MATCH'
       query = /* js */` 
-query ($page: Int, $perPage: Int, $sort: [MediaSort], $type: MediaType, $search: String, $status: MediaStatus, $season: MediaSeason, $year: Int, $genre: String, $format: MediaFormat) {
-  Page (page: $page, perPage: $perPage) {
-    pageInfo {
+query($page: Int, $perPage: Int, $sort: [MediaSort], $search: String, $status: MediaStatus, $season: MediaSeason, $year: Int, $genre: String, $format: MediaFormat){
+  Page(page: $page, perPage: $perPage){
+    pageInfo{
       hasNextPage
     },
-    media(type: $type, search: $search, sort: $sort, status: $status, season: $season, seasonYear: $year, genre: $genre, format: $format) {
+    media(type: ANIME, search: $search, sort: $sort, status: $status, season: $season, seasonYear: $year, genre: $genre, format: $format){
       ${queryObjects}
     }
   }
@@ -415,63 +447,63 @@ query ($page: Int, $perPage: Int, $sort: [MediaSort], $type: MediaType, $search:
       variables.score = opts.score
       variables.lists = opts.lists
       query = /* js */`
-      mutation ($lists: [String], $id: Int, $status: MediaListStatus, $episode: Int, $repeat: Int, $score: Int) {
-        SaveMediaListEntry (mediaId: $id, status: $status, progress: $episode, repeat: $repeat, scoreRaw: $score, customLists: $lists) {
-          id,
-          status,
-          progress,
-          repeat
-        }
-      }`
+mutation($lists: [String], $id: Int, $status: MediaListStatus, $episode: Int, $repeat: Int, $score: Int){
+  SaveMediaListEntry(mediaId: $id, status: $status, progress: $episode, repeat: $repeat, scoreRaw: $score, customLists: $lists){
+    id,
+    status,
+    progress,
+    repeat
+  }
+}`
       break
     } case 'Delete': {
       variables.id = opts.id
       query = /* js */`
-      mutation ($id: Int) {
-        DeleteMediaListEntry (id: $id){
-          deleted
-        }
-      }`
+mutation($id: Int){
+  DeleteMediaListEntry(id: $id){
+    deleted
+  }
+}`
       break
     } case 'Following': {
       variables.id = opts.id
       query = /* js */`
-      query($id: Int) {
-        Page {
-          pageInfo {
-            total,
-            perPage,
-            currentPage,
-            lastPage,
-            hasNextPage
-          },
-          mediaList(mediaId: $id, isFollowing: true, sort: UPDATED_TIME_DESC) {
-            id,
-            status,
-            score,
-            progress,
-            user {
-              id,
-              name,
-              avatar {
-                medium
-              },
-              mediaListOptions {
-                scoreFormat
-              }
-            }
-          }
+query($id: Int){
+  Page{
+    pageInfo{
+      total,
+      perPage,
+      currentPage,
+      lastPage,
+      hasNextPage
+    },
+    mediaList(mediaId: $id, isFollowing: true, sort: UPDATED_TIME_DESC){
+      id,
+      status,
+      score,
+      progress,
+      user{
+        id,
+        name,
+        avatar{
+          medium
+        },
+        mediaListOptions{
+          scoreFormat
         }
-      }`
+      }
+    }
+  }
+}`
       break
     } case 'CustomList':{
       variables.lists = [...opts.lists, 'Watched using Miru']
       query = /* js */`
-      mutation($lists: [String]) {
-        UpdateUser(animeListOptions: { customLists: $lists }){
-          id
-        }
-      }`
+mutation($lists: [String]){
+  UpdateUser(animeListOptions: { customLists: $lists }){
+    id
+  }
+}`
       break
     }
   }
@@ -480,5 +512,5 @@ query ($page: Int, $perPage: Int, $sort: [MediaSort], $type: MediaType, $search:
     variables
   })
 
-  return await handleRequest(options)
+  return handleRequest(options)
 }

@@ -3,39 +3,36 @@ import { DOMPARSER, PromiseBatch } from './util.js'
 import { alRequest, alSearch } from './anilist.js'
 import anitomyscript from 'anitomyscript'
 import 'anitomyscript/dist/anitomyscript.wasm?url'
+import { media } from '@/lib/Player/MediaHandler.svelte'
 import { addToast } from '@/lib/Toasts.svelte'
 import { view } from '@/App.svelte'
 
 const torrentRx = /(^magnet:){1}|(^[A-F\d]{8,40}$){1}|(.*\.torrent$){1}/i
 const imageRx = /\.(jpeg|jpg|gif|png|webp)/i
 
-window.addEventListener('paste', async e => { // WAIT image lookup on paste, or add torrent on paste
-  const item = e.clipboardData.items[0]
-  if (item?.type.indexOf('image') === 0) {
-    e.preventDefault()
-    traceAnime(item.getAsFile(), 'file')
-  } else if (item?.type === 'text/plain') {
-    item.getAsString(text => {
-      if (torrentRx.exec(text)) {
-        e.preventDefault()
-        add(text)
+window.addEventListener('paste', ({ clipboardData }) => { // WAIT image lookup on paste, or add torrent on paste
+  const item = clipboardData.items[0]
+  if (!item) return
+  const { type } = item
+  if (type.startsWith('image')) return traceAnime(item.getAsFile())
+  if (!type.startsWith('text')) return
+  item.getAsString(text => {
+    if (torrentRx.exec(text)) {
+      add(text)
+      media.set(null)
+    } else {
+      let src = null
+      if (type === 'text/html') {
+        src = DOMPARSER(text, 'text/html').querySelectorAll('img')[0]?.src
       } else if (imageRx.exec(text)) {
-        e.preventDefault()
-        traceAnime(text)
+        src = text
       }
-    })
-  } else if (item && item.type === 'text/html') {
-    item.getAsString(text => {
-      const img = DOMPARSER(text, 'text/html').querySelectorAll('img')[0]
-      if (img) {
-        e.preventDefault()
-        traceAnime(img.src)
-      }
-    })
-  }
+      if (src) traceAnime(src)
+    }
+  })
 })
-export function traceAnime (image, type) { // WAIT lookup logic
-  if (type === 'file') {
+export async function traceAnime (image) { // WAIT lookup logic
+  if (image instanceof Blob) {
     const reader = new FileReader()
     reader.onload = e => {
       addToast({
@@ -52,27 +49,89 @@ export function traceAnime (image, type) { // WAIT lookup logic
   }
   let options
   let url = `https://api.trace.moe/search?cutBorders&url=${image}`
-  if (type === 'file') {
-    const formData = new FormData()
-    formData.append('image', image)
+  if (image instanceof Blob) {
     options = {
       method: 'POST',
-      body: formData
+      body: image,
+      headers: { 'Content-type': image.type }
     }
     url = 'https://api.trace.moe/search'
   }
-  fetch(url, options).then(res => res.json()).then(async ({ result }) => {
-    if (result && result[0].similarity >= 0.85) {
-      const res = await alRequest({ method: 'SearchIDSingle', id: result[0].anilist })
-      view.set(res.data.Media)
-    } else {
-      addToast({
-        text: 'Couldn\'t find anime for specified image! Try to remove black bars, or use a more detailed image.',
-        title: 'Search Failed',
-        type: 'danger'
-      })
+  const res = await fetch(url, options)
+  const { result } = await res.json()
+  if (result && result[0].similarity >= 0.85) {
+    const res = await alRequest({ method: 'SearchIDSingle', id: result[0].anilist })
+    view.set(res.data.Media)
+  } else {
+    addToast({
+      text: 'Couldn\'t find anime for specified image! Try to remove black bars, or use a more detailed image.',
+      title: 'Search Failed',
+      type: 'danger'
+    })
+  }
+}
+
+function constructChapters (results, duration) {
+  const chapters = results.map(result => {
+    const diff = duration - result.episodeLength
+    return {
+      start: (result.interval.startTime + diff) * 1000,
+      end: (result.interval.endTime + diff) * 1000,
+      text: result.skipType.toUpperCase()
     }
   })
+  const ed = chapters.find(({ text }) => text === 'ED')
+  const recap = chapters.find(({ text }) => text === 'RECAP')
+  if (recap) recap.text = 'Recap'
+
+  chapters.sort((a, b) => a - b)
+  if ((chapters[0].start | 0) !== 0) {
+    chapters.unshift({ start: 0, end: chapters[0].start, text: chapters[0].text === 'OP' ? 'Intro' : 'Episode' })
+  }
+  if (ed) {
+    if ((ed.end | 0) + 5000 - duration * 1000 < 0) {
+      chapters.push({ start: ed.end, end: duration * 1000, text: 'Preview' })
+    }
+  } else if ((chapters[chapters.length - 1].end | 0) + 5000 - duration * 1000 < 0) {
+    chapters.push({
+      start: chapters[chapters.length - 1].end,
+      end: duration * 1000,
+      text: 'Episode'
+    })
+  }
+
+  for (let i = 0, len = chapters.length - 2; i <= len; ++i) {
+    const current = chapters[i]
+    const next = chapters[i + 1]
+    if ((current.end | 0) !== (next.start | 0)) {
+      chapters.push({
+        start: current.end,
+        end: next.start,
+        text: 'Episode'
+      })
+    }
+  }
+
+  chapters.sort((a, b) => a.start - b.start)
+
+  return chapters
+}
+
+export async function getChaptersAniSkip (file, duration) {
+  const resAccurate = await fetch(`https://api.aniskip.com/v2/skip-times/${file.media.media.idMal}/${file.media.episode}/?episodeLength=${duration}&types=op&types=ed&types=recap`)
+  const jsonAccurate = await resAccurate.json()
+
+  const resRough = await fetch(`https://api.aniskip.com/v2/skip-times/${file.media.media.idMal}/${file.media.episode}/?episodeLength=0&types=op&types=ed&types=recap`)
+  const jsonRough = await resRough.json()
+
+  const map = {}
+  for (const result of [...jsonAccurate.results, ...jsonRough.results]) {
+    map[result.skipType] ||= result
+  }
+
+  const results = Object.values(map)
+  if (!results.length) return []
+  return constructChapters(results, duration)
 }
 
 export function getMediaMaxEp (media, playable) {

@@ -1,13 +1,15 @@
 <script>
-  /* eslint svelte/valid-compile: ["error", { ignoreWarnings: true }] */
+  // /* eslint svelte/valid-compile: ["error", { ignoreWarnings: true }] */
   import { set } from '../Settings.svelte'
   import { playAnime } from '../RSSView.svelte'
   import { client } from '@/modules/torrent.js'
-  import { onMount, createEventDispatcher, tick } from 'svelte'
+  import { createEventDispatcher, tick } from 'svelte'
   import { alEntry } from '@/modules/anilist.js'
   import Subtitles from '@/modules/subtitles.js'
-  import { toTS, videoRx, fastPrettyBytes, throttle } from '@/modules/util.js'
+  import { toTS, videoRx, fastPrettyBytes, wrapEnter } from '@/modules/util.js'
   import { addToast } from '../Toasts.svelte'
+  import { getChaptersAniSkip } from '@/modules/anime.js'
+  import Seekbar from 'perfect-seekbar'
   import { takeScreenshot } from '@/lib/Screenshot.js'
 
   import { w2gEmitter } from '../WatchTogether/WatchTogether.svelte'
@@ -37,7 +39,6 @@
   }
 
   export let miniplayer = false
-  // eslint-disable-next-line prefer-const
   $condition = () => !miniplayer
   export let page
   export let files = []
@@ -50,8 +51,7 @@
   let duration = 0.1
   let paused = true
   let muted = false
-  let wasPaused = true
-  let thumbnail = ' '
+  let wasPaused = null
   let videos = []
   let immersed = false
   let buffering = false
@@ -129,13 +129,13 @@
       currentTime = 0
       targetTime = 0
       chapters = []
+      currentSkippable = null
       completed = false
       current = file
       emit('current', current)
       initSubs()
       src = file.url
       client.send('current', file)
-      clearCanvas()
       await tick()
       video?.play()
     }
@@ -182,22 +182,19 @@
   }
 
   let currentTime = 0
-  $: progress = currentTime / safeduration
-  let throttledProgress = 0
-  const progCb = throttle(() => { throttledProgress = progress }, 200)
-  $: progCb(progress)
+  $: progress = currentTime / safeduration * 100
   $: targetTime = (!paused && currentTime) || targetTime
-  function handleMouseDown ({ target }) {
-    wasPaused = paused
-    paused = true
-    targetTime = target.value * safeduration
+  function handleMouseDown ({ detail }) {
+    if (wasPaused == null) {
+      wasPaused = paused
+      paused = true
+    }
+    targetTime = detail / 100 * safeduration
   }
   function handleMouseUp () {
     paused = wasPaused
+    wasPaused = null
     currentTime = targetTime
-  }
-  function handleProgress ({ target }) {
-    targetTime = target.value * safeduration
   }
 
   function autoPlay () {
@@ -256,11 +253,14 @@
   function skip () {
     const current = findChapter(currentTime)
     if (current) {
-      if (!isChapterSkippable(current)) return
-      const endtime = current.end / 1000
-      if ((safeduration - endtime | 0) === 0) return playNext()
-      currentTime = endtime
-      currentSkippable = null
+      if (!isChapterSkippable(current) && ((current.end - current.start) / 1000) > 100) {
+        currentTime = currentTime + 85
+      } else {
+        const endtime = current.end / 1000
+        if ((safeduration - endtime | 0) === 0) return playNext()
+        currentTime = endtime
+        currentSkippable = null
+      }
     } else if (currentTime < 10) {
       currentTime = 90
     } else if (safeduration - currentTime < 90) {
@@ -609,11 +609,20 @@
     }
     return 0
   }
+  let buffer = 0
+  client.on('progress', ({ detail }) => {
+    buffer = detail * 100
+  })
+
   let chapters = []
   client.on('chapters', ({ detail }) => {
-    chapters = detail
+    if (detail.length) chapters = detail
   })
-  let hoverChapter = null
+  async function findChapters () {
+    if (!chapters.length) {
+      chapters = await getChaptersAniSkip(current, safeduration)
+    }
+  }
 
   let currentSkippable = null
   function checkSkippableChapters () {
@@ -650,15 +659,9 @@
     interval: null,
     video: null
   }
-  let hover = null
-  let hoverTime = 0
-  let hoverOffset = 0
-  function handleHover ({ offsetX, target }) {
-    hoverOffset = offsetX / target.clientWidth
-    hoverTime = safeduration * hoverOffset
-    hoverChapter = findChapter(hoverTime)
-    hover.style.setProperty('left', hoverOffset * 100 + '%')
-    thumbnail = thumbnailData.thumbnails[Math.floor(hoverTime / thumbnailData.interval)] || ' '
+
+  function getThumbnail (percent) {
+    return thumbnailData.thumbnails[Math.floor(percent / 100 * safeduration / thumbnailData.interval)] || ''
   }
   function createThumbnail (vid = video) {
     if (vid?.readyState >= 2) {
@@ -762,35 +765,6 @@
     torrent.up = detail.uploadSpeed || 0
     torrent.down = detail.downloadSpeed || 0
   }
-  let bufferCanvas = null
-  let ctx = null
-  onMount(() => {
-    ctx = bufferCanvas.getContext('2d')
-    clearCanvas()
-  })
-  function clearCanvas () {
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.2)'
-    ctx.fillRect(0, 0, bufferCanvas.width, 1)
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.4)'
-  }
-  let imageData = null
-  function handlePieces ({ detail }) {
-    if (detail.constructor === Array) {
-      if (imageData) {
-        for (let i = 0; i < detail.length; ++i) {
-          imageData.data[i * 4 + 3] = detail[i]
-        }
-        ctx.putImageData(imageData, 0, 0)
-      }
-    } else {
-      const uint32 = new Uint32Array(detail)
-      uint32.fill(872415231) // rgba(255, 255, 255, 0.2) to HEX to DEC
-      imageData = new ImageData(new Uint8ClampedArray(uint32.buffer), detail, 1)
-      bufferCanvas.width = detail
-      clearCanvas()
-    }
-  }
-  client.on('pieces', handlePieces)
 
   function checkError ({ target }) {
     // video playback failed - show a message saying why
@@ -838,8 +812,8 @@
 
 <svelte:window bind:innerWidth bind:innerHeight />
 {#if showKeybinds && !miniplayer}
-  <div class='position-absolute bg-tp w-full h-full z-50 font-size-12 p-20 d-flex align-items-center justify-content-center' on:click|self={() => (showKeybinds = false)}>
-    <button class='close' type='button' on:click={() => (showKeybinds = false)}><span>×</span></button>
+  <div class='position-absolute bg-tp w-full h-full z-50 font-size-12 p-20 d-flex align-items-center justify-content-center' on:click|self={() => (showKeybinds = false)} on:keydown={wrapEnter(() => (showKeybinds = false))}>
+    <button class='close' type='button' on:click={() => (showKeybinds = false)} on:keydown={wrapEnter(() => (showKeybinds = false))}><span>×</span></button>
     <Keybinds let:prop={item} autosave={true} clickable={true}>
       <div class:material-icons={item?.type} class='bind'>{item?.id || ''}</div>
     </Keybinds>
@@ -888,6 +862,7 @@
     on:loadedmetadata={hideBuffering}
     on:ended={tryPlayNext}
     on:loadedmetadata={initThumbnails}
+    on:loadedmetadata={findChapters}
     on:loadedmetadata={autoPlay}
     on:loadedmetadata={checkAudio}
     on:leavepictureinpicture={() => (pip = false)} />
@@ -915,7 +890,7 @@
       <span class='material-icons'> arrow_upward </span>
       <span class='stats'>{fastPrettyBytes(torrent.up)}/s</span>
     </div>
-    <span class='material-icons ctrl' title='Keybinds [`]' on:click={() => (showKeybinds = true)}> help_outline </span>
+    <span class='material-icons ctrl' title='Keybinds [`]' on:click={() => (showKeybinds = true)} on:keydown={wrapEnter(() => (showKeybinds = true))}> help_outline </span>
   </div>
   <div class='middle d-flex align-items-center justify-content-center flex-grow-1 position-relative'>
     <div class='w-full h-full position-absolute' on:dblclick={toggleFullscreen} on:click|self={() => { if (page === 'player') playPause(); page = 'player' }} />
@@ -932,8 +907,8 @@
     {/if}
   </div>
   <div class='bottom d-flex z-40 flex-column px-20'>
-    <div class='w-full d-flex align-items-center h-20 mb--5'>
-      <div class='w-full h-full position-relative d-flex align-items-center'>
+    <div class='w-full d-flex align-items-center h-20 mb-5 seekbar'>
+      <!-- <div class='w-full h-full position-relative d-flex align-items-center'>
         <canvas class='position-absolute buffer w-full' height='1px' bind:this={bufferCanvas} />
         <input
           class='ctrl w-full h-full prog custom-range'
@@ -963,23 +938,37 @@
           {/if}
           <div class='ts'>{toTS(hoverTime)}</div>
         </div>
-      </div>
+      </div> -->
+      <Seekbar
+        accentColor={'#e5204c'}
+        class='font-size-20'
+        length={safeduration}
+        {buffer}
+        bind:progress={progress}
+        on:seeking={handleMouseDown}
+        on:seeked={handleMouseUp}
+        chapters={chapters.map(({ start, end, text }) => ({
+          size: (end / 10 / safeduration) - (start / 10 / safeduration),
+          text
+        }))}
+        {getThumbnail}
+      />
     </div>
     <div class='d-flex'>
-      <span class='material-icons ctrl' title='Play/Pause [Space]' data-name='playPause' on:click={playPause}> {ended ? 'replay' : paused ? 'play_arrow' : 'pause'} </span>
+      <span class='material-icons ctrl' title='Play/Pause [Space]' data-name='playPause' on:click={playPause} on:keydown={wrapEnter(playPause)}> {ended ? 'replay' : paused ? 'play_arrow' : 'pause'} </span>
       {#if hasLast}
-        <span class='material-icons ctrl' title='Last [B]' data-name='playLast' on:click={playLast}> skip_previous </span>
+        <span class='material-icons ctrl' title='Last [B]' data-name='playLast' on:click={playLast} on:keydown={wrapEnter(playLast)}> skip_previous </span>
       {/if}
       {#if hasNext}
-        <span class='material-icons ctrl' title='Next [N]' data-name='playNext' on:click={playNext}> skip_next </span>
+        <span class='material-icons ctrl' title='Next [N]' data-name='playNext' on:click={playNext} on:keydown={wrapEnter(playNext)}> skip_next </span>
       {/if}
       <div class='d-flex w-auto volume'>
-        <span class='material-icons ctrl' title='Mute [M]' data-name='toggleMute' on:click={toggleMute}> {muted ? 'volume_off' : 'volume_up'} </span>
+        <span class='material-icons ctrl' title='Mute [M]' data-name='toggleMute' on:click={toggleMute} on:keydown={wrapEnter(toggleMute)}> {muted ? 'volume_off' : 'volume_up'} </span>
         <input class='ctrl h-full custom-range' type='range' min='0' max='1' step='any' data-name='setVolume' bind:value={volume} />
       </div>
       <div class='ts mr-auto'>{toTS(targetTime, safeduration > 3600 ? 2 : 3)} / {toTS(safeduration - targetTime, safeduration > 3600 ? 2 : 3)}</div>
       {#if 'audioTracks' in HTMLVideoElement.prototype && video?.audioTracks?.length > 1}
-        <div class='dropdown dropup with-arrow' on:click={toggleDropdown}>
+        <div class='dropdown dropup with-arrow' on:click={toggleDropdown} on:keydown={wrapEnter(toggleDropdown)}>
           <span class='material-icons ctrl' title='Audio Tracks'>
             queue_music
           </span>
@@ -1009,7 +998,7 @@
         </div>
       {/if}
       {#if subHeaders?.length}
-        <div class='subtitles dropdown dropup with-arrow' on:click={toggleDropdown}>
+        <div class='subtitles dropdown dropup with-arrow' on:click={toggleDropdown} on:keydown={wrapEnter(toggleDropdown)}>
           <span class='material-icons ctrl' title='Subtitles [C]'>
             subtitles
           </span>
@@ -1029,16 +1018,16 @@
         </div>
       {/if}
       {#if 'PresentationRequest' in window && canCast && current}
-        <span class='material-icons ctrl' title='Cast Video [D]' data-name='toggleCast' on:click={toggleCast}>
+        <span class='material-icons ctrl' title='Cast Video [D]' data-name='toggleCast' on:click={toggleCast} on:keydown={wrapEnter(toggleCast)}>
           {presentationConnection ? 'cast_connected' : 'cast'}
         </span>
       {/if}
       {#if 'pictureInPictureEnabled' in document}
-        <span class='material-icons ctrl' title='Popout Window [P]' data-name='togglePopout' on:click={togglePopout}>
+        <span class='material-icons ctrl' title='Popout Window [P]' data-name='togglePopout' on:click={togglePopout} on:keydown={wrapEnter(togglePopout)}>
           {pip ? 'featured_video' : 'picture_in_picture'}
         </span>
       {/if}
-      <span class='material-icons ctrl' title='Fullscreen [F]' data-name='toggleFullscreen' on:click={toggleFullscreen}>
+      <span class='material-icons ctrl' title='Fullscreen [F]' data-name='toggleFullscreen' on:click={toggleFullscreen} on:keydown={wrapEnter(toggleFullscreen)}>
         {isFullscreen ? 'fullscreen_exit' : 'fullscreen'}
       </span>
     </div>
@@ -1047,7 +1036,7 @@
 
 <style>
   .custom-range {
-    color: #ff3c00;
+    color: #e5204c;
     --thumb-height: 0px;
     --track-height: 3px;
     --track-color: rgba(255, 255, 255, 0.2);
@@ -1061,20 +1050,8 @@
     transition: all ease 100ms;
     appearance: none;
   }
-
-  datalist option {
-    background: rgba(255, 255, 255, 0.2);
-    top: 5px;
-    min-height: unset;
-    height: 6px;
-    width: 2px;
-    padding: 0
-  }
   .custom-range:hover {
     --thumb-height: 12px;
-  }
-  .prog {
-    --track-color: #1110 !important
   }
 
   .custom-range:active {
@@ -1216,8 +1193,6 @@
   .immersed .bottom, .immersed .skip {
     opacity: 0;
   }
-
-  .bottom img[src=' '],
   :fullscreen .ctrl[data-name='toggleCast'] {
     display: none !important;
   }
@@ -1325,11 +1300,6 @@
   .ctrl {
     cursor: pointer;
   }
-
-  canvas.buffer {
-    height: 3px;
-    z-index: -1;
-  }
   .bottom .volume:hover .custom-range {
     width: 5vw;
     display: inline-block;
@@ -1341,38 +1311,23 @@
     transition: width 0.1s ease;
     height: 100%;
   }
-
-  .bottom [data-name='setProgress'] ~ .hover {
-    pointer-events: none;
-    opacity: 0;
-    top: 0;
-    transform: translate(-50%, -100%);
-    position: absolute;
-    font-family: Roboto, Arial, Helvetica, sans-serif;
-    white-space: nowrap;
-    font-weight: 600;
-    width: 200px;
-    transition: 0.2s opacity ease;
-  }
-
-  .bottom [data-name='setProgress']:hover ~ .hover {
-    opacity: 1;
-  }
   .h-20 {
     height: 2rem
-  }
-  .mb--5 {
-    margin-bottom: -.5rem;
   }
 
   .bottom .ts {
     color: #ececec;
     font-size: 2rem !important;
+    text-shadow: 0 0 4px rgb(0 0 0 / 75%);
     white-space: nowrap;
     align-self: center;
     line-height: var(--base-line-height);
     padding: 0 1.56rem;
     font-weight: 600;
+  }
+
+  .seekbar {
+    font-size: 2rem !important;
   }
 
   @media (pointer: none), (pointer: coarse) {

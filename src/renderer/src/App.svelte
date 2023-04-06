@@ -75,6 +75,9 @@
   :global(img) {
     -webkit-user-drag: none;
   }
+  :global(.select-all) {
+    user-select: all;
+  }
   /* sidebar patches */
   .page-wrapper.with-sidebar[data-sidebar-hidden] {
     --sidebar-width: var(--sidebar-minimised);
@@ -89,6 +92,10 @@
   :global(*:focus-visible){
     outline: none;
     box-shadow: var(--dm-button-primary-box-shadow-focus) !important;
+  }
+
+  :global(.modal:focus-visible){
+    box-shadow: none !important;
   }
 
   :global(.root) {

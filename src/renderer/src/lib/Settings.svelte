@@ -13,10 +13,11 @@
     torrentPersist: false,
     torrentDHT: false,
     torrentPeX: false,
-    missingFont: true
+    missingFont: true,
+    maxConns: 20
   }
   localStorage.removeItem('relations') // TODO: remove
-  export const set = JSON.parse(localStorage.getItem('settings')) || { ...defaults }
+  export const set = { ...defaults, ...(JSON.parse(localStorage.getItem('settings')) || {}) }
   if (!set.rssFeeds) { // TODO: remove ;-;
     if (set.rssFeed) {
       set.rssFeeds = [['New Releases', set.rssFeed]]
@@ -195,8 +196,8 @@
             data-toggle='tooltip'
             data-placement='bottom'
             data-title="Automatically Finds Fonts That Are Missing From A Video's Subtitles">
-            <input type='checkbox' id='player-autoplay' bind:checked={settings.missingFont} />
-            <label for='player-autoplay'>Find Missing Fonts</label>
+            <input type='checkbox' id='player-missingFont' bind:checked={settings.missingFont} />
+            <label for='player-missingFont'>Find Missing Fonts</label>
           </div>
           <div class='col p-10 d-flex flex-column justify-content-end'>
             <div class='font-size-24 font-weight-semi-bold d-flex'>
@@ -332,6 +333,16 @@
             </div>
           </div>
           <div
+            class='input-group w-300 form-control-lg mb-10'
+            data-toggle='tooltip'
+            data-placement='bottom'
+            data-title='Max Amount Of Connections Per Torrent'>
+            <div class='input-group-prepend'>
+              <span class='input-group-text w-200 justify-content-center'>Max Connections</span>
+            </div>
+            <input type='number' bind:value={settings.maxConns} min='1' max='512' class='form-control text-right form-control-lg' />
+          </div>
+          <div
             class='custom-switch mb-10 pl-10 font-size-16 w-300'
             data-toggle='tooltip'
             data-placement='bottom'
@@ -343,7 +354,7 @@
             class='custom-switch mb-10 pl-10 font-size-16 w-300'
             data-toggle='tooltip'
             data-placement='bottom'
-            data-title='Disables Distributed Hash Tables For Use In Private Trackers To Improve Piracy'>
+            data-title='Disables Distributed Hash Tables For Use In Private Trackers To Improve Privacy'>
             <input type='checkbox' id='torrent-dht' bind:checked={settings.torrentDHT} />
             <label for='torrent-dht'>Disable DHT</label>
           </div>
@@ -351,7 +362,7 @@
             class='custom-switch mb-10 pl-10 font-size-16 w-300'
             data-toggle='tooltip'
             data-placement='bottom'
-            data-title='Disables Peer Exchange For Use In Private Trackers To Improve Piracy'>
+            data-title='Disables Peer Exchange For Use In Private Trackers To Improve Privacy'>
             <input type='checkbox' id='torrent-pex' bind:checked={settings.torrentPeX} />
             <label for='torrent-pex'>Disable PeX</label>
           </div>

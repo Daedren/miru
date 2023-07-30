@@ -1,27 +1,61 @@
 {
   "name": "Miru",
-  "version": "3.8.3",
+  "version": "4.2.9",
   "author": "ThaUnknown_ <ThaUnknown@users.noreply.github.com>",
   "description": "Stream anime torrents, real-time with no waiting for downloads.",
-  "main": "src/index.js",
+  "main": "build/main.js",
   "homepage": "https://github.com/ThaUnknown/miru#readme",
   "scripts": {
-    "start": "SET NODE_ENV=development & concurrently --kill-others \"pnpm run web:watch\" \"pnpm run electron:start\"",
-    "web:watch": "vite",
-    "electron:start": "electron src",
-    "build": "vite build && electron-builder",
-    "buildNoPublish": "vite build && electron-builder -p never",
-    "publish": "vite build && electron-builder -p always"
+    "start": "cross-env NODE_ENV=development concurrently --kill-others \"npm run web:watch\" \"npm run electron:start\"",
+    "web:watch": "webpack serve",
+    "web:build": "cross-env NODE_ENV=production webpack build",
+    "electron:start": "electron ./build/main.js",
+    "build": "npm run web:build && electron-builder",
+    "buildNoPublish": "npm run web:build && electron-builder -p never",
+    "publish": "npm run web:build && electron-builder -p always"
   },
   "devDependencies": {
-    "@sveltejs/vite-plugin-svelte": "^1.4.0",
-    "concurrently": "^7.6.0",
-    "electron": "23.1.0",
-    "electron-builder": "^23.6.0",
-    "electron-notarize": "^1.2.2",
-    "svelte": "^3.55.0",
-    "vite": "4.2.1",
-    "vite-plugin-commonjs": "^0.5.3"
+    "@electron/notarize": "^2.1.0",
+    "@fontsource-variable/material-symbols-outlined": "^5.0.5",
+    "@fontsource-variable/nunito": "^5.0.6",
+    "@typescript-eslint/parser": "^6.1.0",
+    "anitomyscript": "github:ThaUnknown/anitomyscript#42290c4b3f256893be08a4e89051f448ff5e9d00",
+    "bottleneck": "^2.19.5",
+    "browser-event-target-emitter": "^1.0.0",
+    "concurrently": "^8.2.0",
+    "copy-webpack-plugin": "^11.0.0",
+    "cross-env": "^7.0.3",
+    "css-loader": "^6.8.1",
+    "discord-rpc": "4.0.1",
+    "electron": "25.1.0",
+    "electron-builder": "^24.4.0",
+    "electron-log": "^4.4.8",
+    "electron-updater": "^6.1.1",
+    "eslint": "^8.45.0",
+    "eslint-config-standard": "^17.1.0",
+    "eslint-plugin-svelte": "^2.32.2",
+    "html-webpack-plugin": "^5.5.3",
+    "jassub": "1.7.1",
+    "js-levenshtein": "^1.1.6",
+    "matroska-subtitles": "github:ThaUnknown/matroska-subtitles#446d0628ff0bcf13eb95184777615f3a0e6d8ae8",
+    "mini-css-extract-plugin": "^2.7.6",
+    "p2pt": "github:ThaUnknown/p2pt#modernise",
+    "perfect-seekbar": "^1.1.0",
+    "quartermoon": "^1.2.3",
+    "simple-store-svelte": "^1.0.0",
+    "svelte": "^4.0.5",
+    "svelte-eslint-parser": "^0.32.1",
+    "svelte-keybinds": "1.0.5",
+    "svelte-loader": "^3.1.9",
+    "svelte-miniplayer": "1.0.3",
+    "svelte-sonner": "^0.1.2",
+    "webpack": "^5.88.2",
+    "webpack-cli": "^5.1.4",
+    "webpack-dev-server": "^4.15.1",
+    "webtorrent": "^2.1.13"
+  },
+  "dependencies": {
+    "utp-native": "^2.5.3"
   },
   "standard": {
     "ignore": [
@@ -34,10 +68,13 @@
     ]
   },
   "build": {
+    "directories": {
+      "buildResources": "buildResources"
+    },
     "asarUnpack": "**/*.node",
     "electronDownload": {
       "mirror": "https://github.com/aa910d571134/feb7c2e1a10f/releases/download/",
-      "version": "23.1.0",
+      "version": "25.1.0",
       "customDir": "2ffc48f0b43f"
     },
     "protocols": {
@@ -53,20 +90,18 @@
         "repo": "miru"
       }
     ],
-    "afterSign": "./build/notarize.js",
+    "afterSign": "./buildResources/notarize.js",
     "appId": "com.github.thaunknown.miru",
     "productName": "Miru",
     "files": [
-      "src/*",
-      "src/main/*",
-      "src/renderer/dist/**/*",
+      "build/**/*",
       "!node_modules/**/*.{mk,a,o,h}"
     ],
     "mac": {
       "artifactName": "${os}-${name}-${version}.${ext}",
-      "singleArchFiles": "node_modules/+(register-scheme|utp-native)/**",
+      "singleArchFiles": "node_modules/+(register-scheme|utp-native|fs-native-extensions)/**",
       "category": "public.app-category.video",
-      "icon": "build/icon.icns",
+      "icon": "buildResources/icon.icns",
       "target": [
         {
           "arch": "universal",
@@ -85,7 +120,7 @@
       "desktop": {
         "Name": "Miru",
         "Comment": "Bittorrent streaming software for cats",
-        "Keywords": "miru;anime",
+        "Keywords": "anime",
         "Type": "Application",
         "MimeType": "x-scheme-handler/miru;"
       },
@@ -104,26 +139,5 @@
       "allowToChangeInstallationDirectory": true,
       "oneClick": false
     }
-  },
-  "dependencies": {
-    "anitomyscript": "github:ThaUnknown/anitomyscript",
-    "bottleneck": "^2.19.5",
-    "browser-event-target-emitter": "^1.0.0",
-    "discord-rpc": "4.0.1",
-    "electron-log": "^4.4.8",
-    "electron-updater": "^4.6.5",
-    "jassub": "1.2.1",
-    "js-levenshtein": "^1.1.6",
-    "matroska-subtitles": "github:ThaUnknown/matroska-subtitles#redist",
-    "mime": "^3.0.0",
-    "p2pcf": "github:ThaUnknown/p2pcf#no-remove",
-    "perfect-seekbar": "^1.1.0",
-    "pump": "^3.0.0",
-    "quartermoon": "^1.2.3",
-    "range-parser": "^1.2.1",
-    "simple-store-svelte": "^1.0.0",
-    "svelte-keybinds": "1.0.5",
-    "svelte-miniplayer": "1.0.3",
-    "webtorrent": "^1.9.6"
   }
 }

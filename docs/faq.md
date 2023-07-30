@@ -23,6 +23,9 @@ One of four reasons:
 - your ISP blocks Nyaa, see [this tutorial](https://thewiki.moe/en/tutorials/unblock) for a fix
 - the app couldn't find a matching torrent for the anime
 
+## **I selected an episode to play, but Miru plays something else!**
+Finding desired episodes can sometimes be difficult, if Miru auto-selects an episode incorrectly you can either disable auto-play torrents in settings to select torrents yourself during episode choosing, or manually find and paste in a .torrent file URL or a magnet URL into Miru to play a desired episode manually.
+
 ## **Will you make an android version?**
 No. This app cannot be ported to android in any way.
 
@@ -30,7 +33,7 @@ No. This app cannot be ported to android in any way.
 Yes. For the home menu you can specify a different RSS feed to check when the app looks for new releases. Additionally you can just paste a torrent file/magnet link anywhere when using the app, and it will auto-detect what anime is playing.
 
 ## **Can I change what tracker torrents are found from?**
-Not really. No other tracker has the kind of API/search functionality that Nyaa does, which the app uses to the fullest extent to make sure it finds the torrents it's looking for without false-positives.
+Not really. No other tracker has the kind of API/search functionality which is required, which Miru uses to the fullest extent to make sure it finds the torrents it's looking for without false-positives.
 
 ## **How is this different from sequential qBit?**
 Unlike qBit's sequential, this will prioritise downloading torrent pieces directly needed for playback, which with the user seeking isn't always just sequential.

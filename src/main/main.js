@@ -3,6 +3,7 @@ import path from 'path'
 import { Client } from 'discord-rpc'
 import log from 'electron-log'
 import { autoUpdater } from 'electron-updater'
+import fs from 'fs'
 
 const flags = [
   ['enable-gpu-rasterization'],

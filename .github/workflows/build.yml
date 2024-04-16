@@ -15,6 +15,9 @@ jobs:
         os: [windows-latest, ubuntu-latest, macos-latest]
 
     steps:
+      - name: Install Setuptools for Python
+        run: pip3 install setuptools
+
       - name: Check out Git repository
         uses: actions/checkout@v3
 
@@ -30,10 +33,10 @@ jobs:
           cache: 'pnpm'
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: cd electron && pnpm install --frozen-lockfile
 
       - name: Build
-        run: npm run buildNoPublish
+        run: cd electron && npm run buildNoPublish
         
       - name: Publish to artifacts
         uses: actions/upload-artifact@v3

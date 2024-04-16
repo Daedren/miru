@@ -19,6 +19,8 @@
   import 'rvfc-polyfill'
   import IPC from '@/modules/ipc.js'
 
+  import { takeScreenshot } from '@/modules/screenshot.js'
+
   const emit = createEventDispatcher()
 
   w2gEmitter.on('playerupdate', ({ detail }) => {
@@ -378,29 +380,7 @@
     }
   }
   async function screenshot () {
-    if ('clipboard' in navigator) {
-      const canvas = document.createElement('canvas')
-      const context = canvas.getContext('2d')
-      canvas.width = video.videoWidth
-      canvas.height = video.videoHeight
-      context.drawImage(video, 0, 0)
-      if (subs?.renderer) {
-        subs.renderer.resize(video.videoWidth, video.videoHeight)
-        await new Promise(resolve => setTimeout(resolve, 500)) // this is hacky, but TLDR wait for canvas to update and re-render, in practice this will take at MOST 100ms, but just to be safe
-        context.drawImage(subs.renderer._canvas, 0, 0, canvas.width, canvas.height)
-        subs.renderer.resize(0, 0, 0, 0) // undo resize
-      }
-      const blob = await new Promise(resolve => canvas.toBlob(resolve))
-      await navigator.clipboard.write([
-        new ClipboardItem({
-          [blob.type]: blob
-        })
-      ])
-      canvas.remove()
-      toast.success('Screenshot', {
-        description: 'Saved screenshot to clipboard.'
-      })
-    }
+    takeScreenshot(video, subs, current.name)
   }
   function updatePiPState (paused) {
     const element = /** @type {HTMLVideoElement | undefined} */ (document.pictureInPictureElement)

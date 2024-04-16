@@ -120,6 +120,12 @@ export function debounce (fn, time) {
   }
 }
 
+export const ScreenshotLocation = {
+  Clipboard: 'clipboard',
+  Filesystem: 'filesystem'
+}
+export const ScreenshotLocations = [ScreenshotLocation.Clipboard, ScreenshotLocation.Filesystem]
+
 export const defaults = {
   volume: 1,
   playerAutoplay: true,
@@ -152,7 +158,10 @@ export const defaults = {
   angle: 'default',
   toshoURL: SUPPORTS.extensions ? decodeURIComponent(atob('aHR0cHM6Ly9mZWVkLmFuaW1ldG9zaG8ub3JnLw==')) : '',
   extensions: SUPPORTS.extensions ? ['@thaunknown/ani-resourced'] : [],
-  sources: {}
+  sources: {},
+  screenshotLocation: ScreenshotLocation.Clipboard,
+  screenshotFilesystemPath: undefined,
+  screenshotFilesystemTemplate: '%Y/%m/%F-%n'
 }
 
 export const subtitleExtensions = ['srt', 'vtt', 'ass', 'ssa', 'sub', 'txt']
@@ -164,3 +173,4 @@ export const videoRx = new RegExp(`.(${videoExtensions.join('|')})$`, 'i')
 // freetype supported
 export const fontExtensions = ['ttf', 'ttc', 'woff', 'woff2', 'otf', 'cff', 'otc', 'pfa', 'pfb', 'pcf', 'fnt', 'bdf', 'pfr', 'eot']
 export const fontRx = new RegExp(`.(${fontExtensions.join('|')})$`, 'i')
+

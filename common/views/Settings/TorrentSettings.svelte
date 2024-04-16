@@ -38,7 +38,7 @@
   export let settings
 
   function handleFolder () {
-    IPC.emit('dialog')
+    IPC.emit('dialog', 'torrentPath')
   }
 
   let extensionUrl = ''

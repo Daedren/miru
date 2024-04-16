@@ -50,6 +50,7 @@
   import TorrentSettings from './TorrentSettings.svelte'
   import InterfaceSettings from './InterfaceSettings.svelte'
   import AppSettings from './AppSettings.svelte'
+  import ScreenshotSettings from './ScreenshotSettings.svelte'
   import { anilistClient } from '@/modules/anilist.js'
   import { logout } from '@/components/Logout.svelte'
   import smoothScroll from '@/modules/scroll.js'
@@ -67,6 +68,10 @@
       name: 'Interface',
       icon: 'settings'
     },
+    screenshots: {
+      name: 'Screenshots',
+      icon: 'screenshot_monitor'
+    },
     app: {
       name: 'App',
       icon: 'info'
@@ -76,8 +81,11 @@
       icon: 'description'
     }
   }
-  function pathListener (data) {
-    $settings.torrentPathNew = data
+  function pathListener (data, destination) {
+    if (destination === 'screenshotFilesystemPath') $settings.screenshotFilesystemPath = data
+    if (destination === 'torrentPath') $settings.torrentPathNew = data
+    console.error(data)
+    console.error(destination)
   }
 
   function playerListener (data) {
@@ -157,6 +165,12 @@
     <Tab>
       <div class='root h-full w-full overflow-y-md-auto p-20' use:smoothScroll>
         <InterfaceSettings bind:settings={$settings} />
+        <div class='h-250 d-md-none' />
+      </div>
+    </Tab>
+    <Tab>
+      <div class='root h-full w-full overflow-y-md-auto p-20' use:smoothScroll>
+        <ScreenshotSettings bind:settings={$settings} />
         <div class='h-250 d-md-none' />
       </div>
     </Tab>

@@ -7,6 +7,7 @@ import Protocol from './protocol.js'
 import { development } from './util.js'
 import Dialog from './dialog.js'
 import store from './store.js'
+import FileHandling from './saveFile.js'
 
 // Keep a global reference of the window object, if you don't, the window will
 // be closed automatically when the JavaScript object is garbage collected.
@@ -48,6 +49,7 @@ function createWindow () {
     show: false
   })
   new Discord(mainWindow)
+  new FileHandling()
   new Protocol(mainWindow)
   new Updater(mainWindow)
   new Dialog(webtorrentWindow)

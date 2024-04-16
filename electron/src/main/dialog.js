@@ -21,7 +21,7 @@ export default class Dialog {
         sender.send('player', basename(path, extname(path)))
       }
     })
-    ipcMain.on('dialog', async ({ sender }) => {
+    ipcMain.on('dialog', async (event, data) => {
       const { filePaths, canceled } = await dialog.showOpenDialog({
         title: 'Select torrent download location',
         properties: ['openDirectory']
@@ -36,9 +36,11 @@ export default class Dialog {
             path += '/'
           }
         }
-        store.set('torrentPath', path)
-        torrentWindow.webContents.send('torrentPath', path)
-        sender.send('path', path)
+        store.set(data, path)
+        if (data === "torrentPath") {
+          torrentWindow.webContents.send(data, path)
+        }
+        event.sender.send('path', path, data)
       }
     })
   }

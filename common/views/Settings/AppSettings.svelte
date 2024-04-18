@@ -23,7 +23,6 @@
   function checkUpdate () {
     IPC.emit('update')
   }
-  setInterval(checkUpdate, 1200000)
 </script>
 <div class='d-inline-flex flex-column'>
   <button

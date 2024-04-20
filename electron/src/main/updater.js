@@ -8,7 +8,6 @@ ipcMain.on('update', () => {
   autoUpdater.checkForUpdatesAndNotify()
 })
 
-autoUpdater.checkForUpdatesAndNotify()
 export default class Updater {
   /**
    * @param {import('electron').BrowserWindow} window
